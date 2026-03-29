@@ -1,7 +1,6 @@
 import os
 import datetime
 import requests
-import yfinance as yf
 from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -11,6 +10,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///portfolio.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
+# CONFIGURARE DATE - Noul tau token
+TWELVE_DATA_KEY = "10f7aeb538ed4f709079dbe22841590b"
 TELEGRAM_TOKEN = os.environ.get('TG_TOKEN')
 TELEGRAM_ID = os.environ.get('TG_ID')
 
@@ -24,77 +25,85 @@ with app.app_context():
     db.create_all()
 
 def send_telegram_msg(message):
+    if not TELEGRAM_TOKEN or not TELEGRAM_ID:
+        print("Lipsesc variabilele de mediu pentru Telegram.")
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text={message}"
     try: requests.get(url, timeout=10)
-    except: print("Eroare Telegram")
+    except: print("Eroare trimitere Telegram")
 
-def get_last_session_data(symbol):
+def get_batch_data(symbols):
+    if not symbols: return {}
     try:
-        # Creăm o sesiune care imită un browser real
-        session = requests.Session()
-        session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
+        sym_str = ",".join(symbols)
+        # Folosim endpoint-ul 'quote' pentru pret curent si maximul zilei
+        url = f"https://api.twelvedata.com/quote?symbol={sym_str}&apikey={TWELVE_DATA_KEY}"
+        response = requests.get(url, timeout=15).json()
         
-        ticker = yf.Ticker(symbol, session=session)
-        # Prindem ultimele 7 zile pentru siguranță
-        hist = ticker.history(period="7d")
-        
-        if hist.empty:
-            return None
-        
-        last_day = hist.iloc[-1]
-        return {
-            "current": last_day['Close'],
-            "high": last_day['High'],
-            "date": hist.index[-1].strftime('%d-%m-%Y')
-        }
+        # Twelve Data returneaza dictionar daca e 1 simbol, sau dictionar de dictionare pentru mai multe
+        if len(symbols) == 1:
+            return {symbols[0]: response}
+        return response
     except Exception as e:
-        print(f"Eroare yfinance pentru {symbol}: {e}")
-        return None
+        print(f"Eroare API Batch: {e}")
+        return {}
 
 def check_prices():
     with app.app_context():
         stocks = Stock.query.all()
+        if not stocks: return
+        
+        symbols = [s.symbol for s in stocks]
+        data_cloud = get_batch_data(symbols)
         today = datetime.date.today().isoformat()
+        
         for stock in stocks:
             if stock.last_alert_date == today: continue
-            data = get_last_session_data(stock.symbol)
-            if not data: continue
             
-            current = data['current']
-            high = data['high']
-            alert = False
-            msg = ""
-
+            res = data_cloud.get(stock.symbol)
+            if not res or "close" not in res: continue
+            
+            current = float(res['close'])
+            high = float(res['high'])
+            
+            alert_triggered = False
+            # Alerta -5% vs Achizitie
             if current <= stock.purchase_price * 0.95:
-                msg = f"⚠️ {stock.symbol}: -5% vs achizitie\nAcum: {current:.2f}$"
-                alert = True
+                send_telegram_msg(f"⚠️ {stock.symbol}: -5% vs achizitie\nPret: {current:.2f}$")
+                alert_triggered = True
+            # Alerta -15% vs Maximul ultimei sesiuni
             elif current <= high * 0.85:
-                msg = f"📉 {stock.symbol}: -15% vs maxim zi\nMaxim: {high:.2f}$\nAcum: {current:.2f}$"
-                alert = True
-
-            if alert:
-                send_telegram_msg(msg)
+                send_telegram_msg(f"📉 {stock.symbol}: -15% vs maxim zi\nMaxim: {high:.2f}$\nPret: {current:.2f}$")
+                alert_triggered = True
+                
+            if alert_triggered:
                 stock.last_alert_date = today
                 db.session.commit()
 
+# Monitorizare constanta la fiecare 3 minute (24/7)
 scheduler = BackgroundScheduler()
-scheduler.add_job(func=check_prices, trigger="interval", minutes=15)
+scheduler.add_job(func=check_prices, trigger="interval", minutes=3)
 scheduler.start()
 
 @app.route('/')
 def index():
     stocks = Stock.query.all()
-    results = []
+    symbols = [s.symbol for s in stocks]
+    data_cloud = get_batch_data(symbols)
+    
+    table_results = []
     for s in stocks:
-        data = get_last_session_data(s.symbol)
-        if data:
-            results.append({
-                'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
-                'peak': round(data['high'], 2), 'current': round(data['current'], 2), 'date': data['date']
-            })
-        else:
-            results.append({'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price, 'peak': "N/A", 'current': 0, 'date': "N/A"})
-    return render_template('index.html', stocks=results)
+        res = data_cloud.get(s.symbol, {})
+        current = float(res.get('close', 0))
+        high = float(res.get('high', 0))
+        profit = ((current - s.purchase_price) / s.purchase_price * 100) if current > 0 else 0
+        
+        table_results.append({
+            'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
+            'current': round(current, 2), 'high': round(high, 2),
+            'profit': round(profit, 2), 'date': res.get('datetime', 'N/A')
+        })
+    return render_template('index.html', stocks=table_results)
 
 @app.route('/search')
 def search_stock():
@@ -109,9 +118,9 @@ def search_stock():
 
 @app.route('/add', methods=['POST'])
 def add_stock():
-    symbol = request.form.get('symbol').upper()
-    price = request.form.get('price')
-    if not Stock.query.filter_by(symbol=symbol).first():
+    symbol = request.form.get('symbol', '').upper()
+    price = request.form.get('price', 0)
+    if symbol and not Stock.query.filter_by(symbol=symbol).first():
         db.session.add(Stock(symbol=symbol, purchase_price=float(price)))
         db.session.commit()
     return jsonify({"status": "ok"})
