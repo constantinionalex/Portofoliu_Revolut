@@ -3,205 +3,124 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portofoliu Revolut | Control Panel</title>
+    <title>Portofoliu Revolut</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
     <style>
-        body { background-color: #f0f2f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-        .search-results { 
-            position: absolute; width: 100%; z-index: 1050; 
-            max-height: 250px; overflow-y: auto; box-shadow: 0 8px 16px rgba(0,0,0,0.1); 
+        body { background-color: #f4f7f9; }
+        .search-box { position: relative; }
+        .results-dropdown { 
+            position: absolute; width: 100%; z-index: 1000; 
+            background: white; border: 1px solid #ddd; border-radius: 8px;
+            max-height: 200px; overflow-y: auto; display: none;
         }
-        .btn-primary { background-color: #0052ff; border: none; border-radius: 8px; }
-        .btn-primary:hover { background-color: #003db3; }
-        .table-container { background: white; border-radius: 12px; padding: 20px; }
-        .symbol-badge { background: #e7f0ff; color: #0052ff; padding: 4px 8px; border-radius: 6px; font-weight: 600; }
-        .price-up { color: #28a745; font-weight: 500; }
-        .price-down { color: #dc3545; font-weight: 500; }
+        .card { border-radius: 15px; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
     </style>
 </head>
 <body>
-
 <div class="container py-5">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h1 class="h3 mb-0">📊 Management Portofoliu</h1>
-            <p class="text-muted">Monitorizare automată și alerte Telegram</p>
-        </div>
-        <div class="text-end">
-            <span class="badge bg-dark p-2">Port 5005 | Activ</span>
-        </div>
-    </div>
+    <h2 class="mb-4 text-primary fw-bold"><i class="bi bi-wallet2 me-2"></i>Portofoliu Acțiuni</h2>
 
     <div class="card p-4 mb-4">
-        <h5 class="card-title mb-3"><i class="bi bi-plus-circle-fill me-2 text-primary"></i>Adaugă Acțiune Nouă</h5>
-        <form id="stockForm" class="row g-3 align-items-end">
-            <div class="col-md-5 position-relative">
-                <label class="form-label text-secondary small fw-bold">Nume Companie sau Simbol</label>
-                <div class="input-group">
-                    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
-                    <input type="text" id="symbolInput" class="form-control" placeholder="Caută (ex: Google, Apple, Tesla...)" autocomplete="off" required>
-                </div>
-                <div id="searchResults" class="list-group search-results" style="display: none;"></div>
+        <form id="stockForm" class="row g-3 align-items-end text-start">
+            <div class="col-md-6 search-box">
+                <label class="form-label fw-bold">Caută Acțiune (Nume sau Simbol)</label>
+                <input type="text" id="symbolInput" class="form-control" placeholder="Ex: Google, Tesla, Apple..." autocomplete="off" required>
+                <div id="results" class="results-dropdown list-group list-group-flush"></div>
                 <input type="hidden" id="finalSymbol">
             </div>
-            
-            <div class="col-md-4">
-                <label class="form-label text-secondary small fw-bold">Preț Achiziție ($)</label>
-                <div class="input-group">
-                    <span class="input-group-text bg-white">$</span>
-                    <input type="number" id="purchasePrice" class="form-control" step="0.01" placeholder="0.00" required>
-                </div>
-            </div>
-
             <div class="col-md-3">
-                <button type="submit" class="btn btn-primary w-100 py-2">
-                    <i class="bi bi-save me-2"></i>Salvează în Listă
-                </button>
+                <label class="form-label fw-bold">Preț Achiziție ($)</label>
+                <input type="number" id="purchasePrice" class="form-control" step="0.01" required>
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">Adaugă Acțiune</button>
             </div>
         </form>
     </div>
 
-    <div class="table-container shadow-sm">
+    <div class="card overflow-hidden">
         <table class="table table-hover align-middle mb-0">
-            <thead>
-                <tr class="text-secondary small text-uppercase">
-                    <th>Activ</th>
-                    <th>Preț Achiziție</th>
-                    <th>Vârf (Ult. 24h)</th>
-                    <th>Status Alertă</th>
-                    <th class="text-end">Gestionare</th>
+            <thead class="table-light">
+                <tr>
+                    <th class="ps-4">Simbol</th>
+                    <th>Achiziție</th>
+                    <th>Vârf (24h)</th>
+                    <th>Status</th>
+                    <th class="text-end pe-4">Acțiuni</th>
                 </tr>
             </thead>
-            <tbody id="stockTable">
+            <tbody>
                 {% for stock in stocks %}
                 <tr>
+                    <td class="ps-4"><strong>{{ stock.symbol }}</strong></td>
+                    <td>${{ stock.buy }}</td>
+                    <td class="text-success fw-bold">${{ stock.peak }}</td>
                     <td>
-                        <span class="symbol-badge">{{ stock.symbol }}</span>
-                    </td>
-                    <td>
-                        <span class="fw-bold">${{ stock.buy }}</span>
-                    </td>
-                    <td>
-                        <span class="text-success fw-medium">${{ stock.peak }}</span>
-                    </td>
-                    <td>
-                        {% if stock.buy * 0.95 >= stock.current_price %}
-                            <span class="badge rounded-pill bg-danger text-white"><i class="bi bi-exclamation-triangle me-1"></i> Sub prag 5%</span>
+                        {% if stock.buy * 0.95 >= stock.current %}
+                            <span class="badge bg-danger">⚠️ Scădere >5%</span>
                         {% else %}
-                            <span class="badge rounded-pill bg-light text-dark border"><i class="bi bi-check-circle-fill me-1 text-success"></i> În monitorizare</span>
+                            <span class="badge bg-success">Monitorizat</span>
                         {% endif %}
                     </td>
-                    <td class="text-end">
-                        <button class="btn btn-outline-danger btn-sm border-0" onclick="deleteStock({{ stock.id }})">
-                            <i class="bi bi-trash3"></i>
-                        </button>
+                    <td class="text-end pe-4">
+                        <button class="btn btn-outline-danger btn-sm border-0" onclick="deleteStock({{ stock.id }})"><i class="bi bi-trash"></i></button>
                     </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
-        {% if not stocks %}
-        <div class="text-center py-5">
-            <i class="bi bi-bar-chart-line text-light" style="font-size: 3rem;"></i>
-            <p class="text-muted mt-2">Nu ai nicio acțiune în listă. Folosește formularul de mai sus.</p>
-        </div>
-        {% endif %}
     </div>
 </div>
 
 <script>
     const symbolInput = document.getElementById('symbolInput');
-    const resultsDiv = document.getElementById('searchResults');
+    const resultsDiv = document.getElementById('results');
     const finalSymbol = document.getElementById('finalSymbol');
 
-    // 1. Căutare Inteligentă Yahoo Finance
     symbolInput.addEventListener('input', async (e) => {
         const query = e.target.value.trim();
-        if (query.length < 2) {
-            resultsDiv.style.display = 'none';
-            return;
-        }
-
-        try {
-            // Interogăm Yahoo Finance prin proxy-ul lor public (nu necesită API Key)
-            const response = await fetch(`https://query1.finance.yahoo.com/v1/finance/search?q=${query}`);
-            const data = await response.json();
-            
-            resultsDiv.innerHTML = '';
-            if (data.quotes && data.quotes.length > 0) {
-                data.quotes.slice(0, 6).forEach(quote => {
-                    // Filtrăm doar pentru acțiuni (EQUITY)
-                    if (quote.quoteType === 'EQUITY' || quote.quoteType === 'ETF') {
-                        const btn = document.createElement('button');
-                        btn.className = 'list-group-item list-group-item-action border-0 py-2';
-                        btn.type = 'button';
-                        btn.innerHTML = `
-                            <div class="d-flex justify-content-between">
-                                <strong>${quote.symbol}</strong>
-                                <small class="text-muted">${quote.exchDisp}</small>
-                            </div>
-                            <div class="small text-truncate" style="max-width: 250px;">${quote.shortname || quote.longname}</div>
-                        `;
-                        btn.onclick = () => {
-                            symbolInput.value = `${quote.symbol} - ${quote.shortname || quote.longname}`;
-                            finalSymbol.value = quote.symbol; // Salvăm Ticker-ul (ex: GOOGL)
-                            resultsDiv.style.display = 'none';
-                        };
-                        resultsDiv.appendChild(btn);
-                    }
-                });
-                resultsDiv.style.display = 'block';
-            }
-        } catch (err) {
-            console.error("Eroare la căutare:", err);
+        if (query.length < 2) { resultsDiv.style.display = 'none'; return; }
+        
+        const response = await fetch(`/search?q=${query}`);
+        const data = await response.json();
+        
+        resultsDiv.innerHTML = '';
+        if (data.length > 0) {
+            data.forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'list-group-item list-group-item-action text-start';
+                btn.type = 'button';
+                btn.innerHTML = `<strong>${item.symbol}</strong> - ${item.name}`;
+                btn.onclick = () => {
+                    symbolInput.value = `${item.symbol} (${item.name})`;
+                    finalSymbol.value = item.symbol;
+                    resultsDiv.style.display = 'none';
+                };
+                resultsDiv.appendChild(btn);
+            });
+            resultsDiv.style.display = 'block';
         }
     });
 
-    // 2. Închidere dropdown la click în exterior
-    document.addEventListener('click', (e) => {
-        if (!symbolInput.contains(e.target) && !resultsDiv.contains(e.target)) {
-            resultsDiv.style.display = 'none';
-        }
-    });
-
-    // 3. Trimitere Formular
     document.getElementById('stockForm').onsubmit = async (e) => {
         e.preventDefault();
+        if (!finalSymbol.value) { alert("Alege o acțiune din listă!"); return; }
         
-        const ticker = finalSymbol.value;
-        const price = document.getElementById('purchasePrice').value;
-
-        if (!ticker) {
-            alert("Te rugăm să selectezi o acțiune din lista de sugestii!");
-            return;
-        }
-
         const formData = new FormData();
-        formData.append('symbol', ticker);
-        formData.append('price', price);
+        formData.append('symbol', finalSymbol.value);
+        formData.append('price', document.getElementById('purchasePrice').value);
         
-        try {
-            const response = await fetch('/add', { method: 'POST', body: formData });
-            if (response.ok) {
-                location.reload();
-            } else {
-                alert("Eroare la salvarea acțiunii.");
-            }
-        } catch (error) {
-            console.error("Eroare server:", error);
-        }
+        await fetch('/add', { method: 'POST', body: formData });
+        location.reload();
     };
 
-    // 4. Ștergere Acțiune
     async function deleteStock(id) {
-        if (confirm('Sigur vrei să elimini această acțiune din monitorizare?')) {
-            const response = await fetch(`/delete/${id}`, { method: 'DELETE' });
-            if (response.ok) location.reload();
+        if (confirm('Ștergi acțiunea?')) {
+            await fetch(`/delete/${id}`, { method: 'DELETE' });
+            location.reload();
         }
     }
 </script>
-
 </body>
 </html>
