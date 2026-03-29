@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  revolut-portfolio:
+    build: .  # Aceasta este modificarea cheie
+    container_name: stock_manager
+    ports:
+      - "5005:5000"
+    environment:
+      - TG_TOKEN=8722371365:AAGiQ8g9M2LPNQIsYaM6V0KApwkKaJTi5vg
+      - TG_ID=8708984447
+    volumes:
+      - stock_data:/app/instance
+    restart: always
+
+volumes:
+  stock_data:
