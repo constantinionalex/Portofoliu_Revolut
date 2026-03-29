@@ -7,17 +7,15 @@ from flask_sqlalchemy import SQLAlchemy
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
-# Baza de date va fi salvată în folderul instance, mapat la volumul Docker
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///portfolio.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# Configurare Telegram din variabilele de mediu setate în Portainer
 TELEGRAM_TOKEN = os.environ.get('TG_TOKEN')
 TELEGRAM_ID = os.environ.get('TG_ID')
 
 class Stock(db.Model):
-    id = db.Model.id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.Integer, primary_key=True)
     symbol = db.Column(db.String(10), unique=True, nullable=False)
     purchase_price = db.Column(db.Float, nullable=False)
     last_alert_date = db.Column(db.String(20), default="")
@@ -27,10 +25,28 @@ with app.app_context():
 
 def send_telegram_msg(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text={message}"
+    try: requests.get(url)
+    except: print("Eroare Telegram")
+
+def get_stock_data(symbol):
     try:
-        requests.get(url)
+        ticker = yf.Ticker(symbol)
+        # Folosim period="7d" pentru a acoperi weekend-ul
+        # Intervalul "1d" este cel mai stabil pentru date istorice recente
+        hist = ticker.history(period="7d", interval="1d")
+        
+        if hist.empty or len(hist) < 1:
+            return None
+        
+        # Luam ultimul pret de inchidere disponibil (chiar daca e de vineri)
+        current_price = hist['Close'].iloc[-1]
+        # Varful este maximul din ultimele zile de tranzactionare gasite
+        peak_period = hist['High'].max()
+        
+        return {"current": current_price, "peak": peak_period}
     except Exception as e:
-        print(f"Eroare trimitere Telegram: {e}")
+        print(f"Eroare yfinance pentru {symbol}: {e}")
+        return None
 
 def check_prices():
     with app.app_context():
@@ -41,25 +57,22 @@ def check_prices():
             if stock.last_alert_date == today:
                 continue
 
-            ticker = yf.Ticker(stock.symbol)
-            # Luăm datele pe ultimele 2 zile pentru a calcula vârful de 24h
-            hist = ticker.history(period="2d", interval="1h")
-            if hist.empty: continue
+            data = get_stock_data(stock.symbol)
+            if not data: continue
 
-            current_price = hist['Close'].iloc[-1]
-            peak_24h = hist['High'].max()
+            current_price = data['current']
+            peak_val = data['peak']
             
             alert_triggered = False
             msg = ""
 
-            # Regula 1: Scădere 5% față de prețul de achiziție
+            # Alerta 5% fata de achizitie
             if current_price <= stock.purchase_price * 0.95:
-                msg = f"⚠️ Alertă {stock.symbol}: Scădere >5% față de achiziție!\nPreț achiziție: {stock.purchase_price:.2f}$\nPreț actual: {current_price:.2f}$"
+                msg = f"⚠️ {stock.symbol}: Scadere >5% fata de achizitie!\nAchizitie: {stock.purchase_price:.2f}$\nActual (Ultimul): {current_price:.2f}$"
                 alert_triggered = True
-            
-            # Regula 2: Scădere 15% față de vârful ultimelor 24h
-            elif current_price <= peak_24h * 0.85:
-                msg = f"📉 Alertă {stock.symbol}: Scădere >15% față de vârful 24h!\nVârf 24h: {peak_24h:.2f}$\nPreț actual: {current_price:.2f}$"
+            # Alerta 15% fata de varf
+            elif current_price <= peak_val * 0.85:
+                msg = f"📉 {stock.symbol}: Scadere >15% fata de varful recent!\nVarf detectat: {peak_val:.2f}$\nActual (Ultimul): {current_price:.2f}$"
                 alert_triggered = True
 
             if alert_triggered:
@@ -67,7 +80,6 @@ def check_prices():
                 stock.last_alert_date = today
                 db.session.commit()
 
-# Pornim verificarea automată la fiecare 15 minute
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=check_prices, trigger="interval", minutes=15)
 scheduler.start()
@@ -77,19 +89,17 @@ def index():
     stocks = Stock.query.all()
     results = []
     for s in stocks:
-        try:
-            t = yf.Ticker(s.symbol)
-            h = t.history(period="2d")
-            peak = h['High'].max() if not h.empty else 0
+        data = get_stock_data(s.symbol)
+        if data:
             results.append({
-                'id': s.id, 
-                'symbol': s.symbol, 
-                'buy': s.purchase_price, 
-                'peak': round(peak, 2),
-                'current': round(h['Close'].iloc[-1], 2) if not h.empty else 0
+                'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
+                'peak': round(data['peak'], 2), 'current': round(data['current'], 2)
             })
-        except:
-            continue
+        else:
+            results.append({
+                'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
+                'peak': "N/A", 'current': 0 
+            })
     return render_template('index.html', stocks=results)
 
 @app.route('/search')
@@ -97,15 +107,13 @@ def search_stock():
     query = request.args.get('q')
     if not query: return jsonify([])
     url = f"https://query1.finance.yahoo.com/v1/finance/search?q={query}"
-    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        resp = requests.get(url, headers=headers)
+        resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         data = resp.json()
         output = [{'symbol': q['symbol'], 'name': q.get('shortname', q.get('longname', ''))} 
                   for q in data.get('quotes', []) if q.get('quoteType') in ['EQUITY', 'ETF']]
         return jsonify(output)
-    except:
-        return jsonify([])
+    except: return jsonify([])
 
 @app.route('/add', methods=['POST'])
 def add_stock():
