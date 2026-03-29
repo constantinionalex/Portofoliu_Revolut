@@ -2,56 +2,46 @@
 <html lang="ro">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portofoliu Revolut</title>
+    <title>Portofoliu Actiuni - Monitorizare 3min</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
     <style>
-        body { background-color: #f4f7f9; }
-        .search-box { position: relative; }
-        .results-dropdown { 
-            position: absolute; width: 100%; z-index: 1000; 
-            background: white; border: 1px solid #ddd; border-radius: 8px;
-            max-height: 200px; overflow-y: auto; display: none;
-        }
-        .card { border-radius: 15px; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        body { background: #f8f9fa; }
+        .card { border-radius: 15px; border: none; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .results-dropdown { position: absolute; width: 100%; z-index: 1000; background: white; display: none; border: 1px solid #ddd; }
     </style>
 </head>
 <body>
 <div class="container py-5 text-start">
-    <div class="d-flex justify-content-between align-items-center mb-4 text-start">
-        <h2 class="text-primary fw-bold mb-0"><i class="bi bi-wallet2 me-2"></i>Portofoliu Acțiuni</h2>
-        <span class="badge bg-dark p-2">Referință: Maxim Ultima Sesiune</span>
-    </div>
+    <h2 class="mb-4 text-primary fw-bold">🚀 Monitorizare Portofoliu (Batch)</h2>
 
     <div class="card p-4 mb-4">
-        <form id="stockForm" class="row g-3 align-items-end text-start">
-            <div class="col-md-6 search-box">
-                <label class="form-label fw-bold">Caută Acțiune (Nume sau Simbol)</label>
-                <input type="text" id="symbolInput" class="form-control" placeholder="Ex: Google, Netflix..." autocomplete="off" required>
-                <div id="results" class="results-dropdown list-group list-group-flush text-start"></div>
+        <form id="stockForm" class="row g-3 align-items-end">
+            <div class="col-md-6 position-relative">
+                <label class="form-label fw-bold">Nume sau Simbol</label>
+                <input type="text" id="symbolInput" class="form-control" placeholder="Cauta actiune..." autocomplete="off" required>
+                <div id="results" class="results-dropdown list-group shadow"></div>
                 <input type="hidden" id="finalSymbol">
             </div>
             <div class="col-md-3">
-                <label class="form-label fw-bold">Preț Achiziție ($)</label>
+                <label class="form-label fw-bold">Pret Achizitie ($)</label>
                 <input type="number" id="purchasePrice" class="form-control" step="0.01" required>
             </div>
             <div class="col-md-3">
-                <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">Adaugă în Listă</button>
+                <button type="submit" class="btn btn-primary w-100 fw-bold">Adauga Actiune</button>
             </div>
         </form>
     </div>
 
     <div class="card overflow-hidden">
-        <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
+        <table class="table table-hover mb-0">
+            <thead class="table-dark">
                 <tr>
                     <th class="ps-4">Simbol</th>
-                    <th>Achiziție</th>
-                    <th>Maxim Zi Tranz.</th>
-                    <th>Data Sesiune</th>
-                    <th>Status</th>
-                    <th class="text-end pe-4">Șterge</th>
+                    <th>Achizitie</th>
+                    <th>Pret Curent</th>
+                    <th>Maxim Zi</th>
+                    <th>Evolutie (%)</th>
+                    <th class="text-end pe-4">Actiuni</th>
                 </tr>
             </thead>
             <tbody>
@@ -59,21 +49,13 @@
                 <tr>
                     <td class="ps-4"><strong>{{ stock.symbol }}</strong></td>
                     <td>${{ stock.buy }}</td>
-                    <td class="text-success fw-bold">
-                        {% if stock.peak == "N/A" %} - {% else %} ${{ stock.peak }} {% endif %}
-                    </td>
-                    <td class="text-muted small">{{ stock.date }}</td>
-                    <td>
-                        {% if stock.peak != "N/A" and stock.buy * 0.95 >= stock.current and stock.current > 0 %}
-                            <span class="badge bg-danger">⚠️ Scădere >5%</span>
-                        {% elif stock.peak != "N/A" and stock.peak * 0.85 >= stock.current and stock.current > 0 %}
-                            <span class="badge bg-warning text-dark">📉 Scădere >15% vs Maxim</span>
-                        {% else %}
-                            <span class="badge bg-success">OK</span>
-                        {% endif %}
+                    <td class="text-primary fw-bold">${{ stock.current }}</td>
+                    <td class="text-success">${{ stock.high }}</td>
+                    <td class="fw-bold {% if stock.profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        {{ stock.profit }}%
                     </td>
                     <td class="text-end pe-4">
-                        <button class="btn btn-outline-danger btn-sm border-0" onclick="deleteStock({{ stock.id }})"><i class="bi bi-trash"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteStock({{ stock.id }})">Sterge</button>
                     </td>
                 </tr>
                 {% endfor %}
@@ -88,18 +70,17 @@
     const finalSymbol = document.getElementById('finalSymbol');
 
     symbolInput.addEventListener('input', async (e) => {
-        const query = e.target.value.trim();
+        const query = e.target.value;
         if (query.length < 2) { resultsDiv.style.display = 'none'; return; }
-        const response = await fetch(`/search?q=${query}`);
-        const data = await response.json();
+        const res = await fetch(`/search?q=${query}`);
+        const data = await res.json();
         resultsDiv.innerHTML = '';
         data.forEach(item => {
             const btn = document.createElement('button');
             btn.className = 'list-group-item list-group-item-action text-start';
-            btn.type = 'button';
             btn.innerHTML = `<strong>${item.symbol}</strong> - ${item.name}`;
             btn.onclick = () => {
-                symbolInput.value = `${item.symbol} (${item.name})`;
+                symbolInput.value = item.symbol;
                 finalSymbol.value = item.symbol;
                 resultsDiv.style.display = 'none';
             };
@@ -110,7 +91,6 @@
 
     document.getElementById('stockForm').onsubmit = async (e) => {
         e.preventDefault();
-        if (!finalSymbol.value) return;
         const formData = new FormData();
         formData.append('symbol', finalSymbol.value);
         formData.append('price', document.getElementById('purchasePrice').value);
@@ -119,7 +99,7 @@
     };
 
     async function deleteStock(id) {
-        if (confirm('Ștergi acțiunea?')) {
+        if (confirm('Sigur vrei sa stergi monitorizarea?')) {
             await fetch(`/delete/${id}`, { method: 'DELETE' });
             location.reload();
         }
