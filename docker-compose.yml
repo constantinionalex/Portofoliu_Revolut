@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   revolut-portfolio:
-    build: .  # Aceasta este modificarea cheie
+    build: .
     container_name: stock_manager
     ports:
       - "5005:5000"
