@@ -28,22 +28,23 @@ def send_telegram_msg(message):
     try: requests.get(url)
     except: print("Eroare Telegram")
 
-def get_stock_data(symbol):
+def get_last_session_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
-        # Folosim period="7d" pentru a acoperi weekend-ul
-        # Intervalul "1d" este cel mai stabil pentru date istorice recente
-        hist = ticker.history(period="7d", interval="1d")
+        # Luam ultimele 5 zile pentru a fi siguri ca prindem ultima sesiune (chiar si dupa weekend/sarbatori)
+        hist = ticker.history(period="5d")
         
-        if hist.empty or len(hist) < 1:
+        if hist.empty:
             return None
         
-        # Luam ultimul pret de inchidere disponibil (chiar daca e de vineri)
-        current_price = hist['Close'].iloc[-1]
-        # Varful este maximul din ultimele zile de tranzactionare gasite
-        peak_period = hist['High'].max()
+        # Selectam strict ULTIMA linie (ultima zi de tranzactionare incheiata sau in curs)
+        last_day = hist.iloc[-1]
         
-        return {"current": current_price, "peak": peak_period}
+        return {
+            "current": last_day['Close'],
+            "high": last_day['High'],
+            "date": hist.index[-1].strftime('%d-%m-%Y')
+        }
     except Exception as e:
         print(f"Eroare yfinance pentru {symbol}: {e}")
         return None
@@ -57,22 +58,23 @@ def check_prices():
             if stock.last_alert_date == today:
                 continue
 
-            data = get_stock_data(stock.symbol)
+            data = get_last_session_data(stock.symbol)
             if not data: continue
 
             current_price = data['current']
-            peak_val = data['peak']
+            last_day_high = data['high']
             
             alert_triggered = False
             msg = ""
 
-            # Alerta 5% fata de achizitie
+            # Alerta 5% fata de pretul tau de achizitie (Constantin)
             if current_price <= stock.purchase_price * 0.95:
-                msg = f"⚠️ {stock.symbol}: Scadere >5% fata de achizitie!\nAchizitie: {stock.purchase_price:.2f}$\nActual (Ultimul): {current_price:.2f}$"
+                msg = f"⚠️ {stock.symbol}: Scadere >5% fata de achizitie!\nAchizitie: {stock.purchase_price:.2f}$\nPret actual: {current_price:.2f}$"
                 alert_triggered = True
-            # Alerta 15% fata de varf
-            elif current_price <= peak_val * 0.85:
-                msg = f"📉 {stock.symbol}: Scadere >15% fata de varful recent!\nVarf detectat: {peak_val:.2f}$\nActual (Ultimul): {current_price:.2f}$"
+            
+            # Alerta 15% fata de MAXIMUL ULTIMEI ZILE de tranzactionare
+            elif current_price <= last_day_high * 0.85:
+                msg = f"📉 {stock.symbol}: Scadere >15% fata de maximul ultimei zile ({data['date']})!\nMaxim zi: {last_day_high:.2f}$\nPret actual: {current_price:.2f}$"
                 alert_triggered = True
 
             if alert_triggered:
@@ -89,16 +91,18 @@ def index():
     stocks = Stock.query.all()
     results = []
     for s in stocks:
-        data = get_stock_data(s.symbol)
+        data = get_last_session_data(s.symbol)
         if data:
             results.append({
                 'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
-                'peak': round(data['peak'], 2), 'current': round(data['current'], 2)
+                'peak': round(data['high'], 2), 
+                'current': round(data['current'], 2),
+                'date': data['date']
             })
         else:
             results.append({
                 'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
-                'peak': "N/A", 'current': 0 
+                'peak': "N/A", 'current': 0, 'date': "N/A"
             })
     return render_template('index.html', stocks=results)
 
