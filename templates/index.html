@@ -19,14 +19,17 @@
 </head>
 <body>
 <div class="container py-5">
-    <h2 class="mb-4 text-primary fw-bold"><i class="bi bi-wallet2 me-2"></i>Portofoliu Acțiuni</h2>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="text-primary fw-bold mb-0"><i class="bi bi-wallet2 me-2"></i>Portofoliu Acțiuni</h2>
+        <span class="badge bg-info p-2"><i class="bi bi-calendar-event me-1"></i> Date actualizate (inclusiv Weekend)</span>
+    </div>
 
     <div class="card p-4 mb-4">
         <form id="stockForm" class="row g-3 align-items-end text-start">
             <div class="col-md-6 search-box">
                 <label class="form-label fw-bold">Caută Acțiune (Nume sau Simbol)</label>
                 <input type="text" id="symbolInput" class="form-control" placeholder="Ex: Google, Tesla, Apple..." autocomplete="off" required>
-                <div id="results" class="results-dropdown list-group list-group-flush"></div>
+                <div id="results" class="results-dropdown list-group list-group-flush text-start"></div>
                 <input type="hidden" id="finalSymbol">
             </div>
             <div class="col-md-3">
@@ -40,12 +43,12 @@
     </div>
 
     <div class="card overflow-hidden">
-        <table class="table table-hover align-middle mb-0">
+        <table class="table table-hover align-middle mb-0 text-start">
             <thead class="table-light">
                 <tr>
                     <th class="ps-4">Simbol</th>
                     <th>Achiziție</th>
-                    <th>Vârf (24h)</th>
+                    <th>Ultimul Vârf (7z)</th>
                     <th>Status</th>
                     <th class="text-end pe-4">Acțiuni</th>
                 </tr>
@@ -55,10 +58,14 @@
                 <tr>
                     <td class="ps-4"><strong>{{ stock.symbol }}</strong></td>
                     <td>${{ stock.buy }}</td>
-                    <td class="text-success fw-bold">${{ stock.peak }}</td>
+                    <td class="text-success fw-bold">
+                        {% if stock.peak == "N/A" %} <span class="text-muted small">Căutare date...</span> {% else %} ${{ stock.peak }} {% endif %}
+                    </td>
                     <td>
-                        {% if stock.buy * 0.95 >= stock.current %}
+                        {% if stock.peak != "N/A" and stock.buy * 0.95 >= stock.current and stock.current > 0 %}
                             <span class="badge bg-danger">⚠️ Scădere >5%</span>
+                        {% elif stock.peak == "N/A" %}
+                            <span class="badge bg-secondary">Offline</span>
                         {% else %}
                             <span class="badge bg-success">Monitorizat</span>
                         {% endif %}
@@ -81,36 +88,34 @@
     symbolInput.addEventListener('input', async (e) => {
         const query = e.target.value.trim();
         if (query.length < 2) { resultsDiv.style.display = 'none'; return; }
-        
-        const response = await fetch(`/search?q=${query}`);
-        const data = await response.json();
-        
-        resultsDiv.innerHTML = '';
-        if (data.length > 0) {
-            data.forEach(item => {
-                const btn = document.createElement('button');
-                btn.className = 'list-group-item list-group-item-action text-start';
-                btn.type = 'button';
-                btn.innerHTML = `<strong>${item.symbol}</strong> - ${item.name}`;
-                btn.onclick = () => {
-                    symbolInput.value = `${item.symbol} (${item.name})`;
-                    finalSymbol.value = item.symbol;
-                    resultsDiv.style.display = 'none';
-                };
-                resultsDiv.appendChild(btn);
-            });
-            resultsDiv.style.display = 'block';
-        }
+        try {
+            const response = await fetch(`/search?q=${query}`);
+            const data = await response.json();
+            resultsDiv.innerHTML = '';
+            if (data.length > 0) {
+                data.forEach(item => {
+                    const btn = document.createElement('button');
+                    btn.className = 'list-group-item list-group-item-action text-start';
+                    btn.type = 'button';
+                    btn.innerHTML = `<strong>${item.symbol}</strong> - ${item.name}`;
+                    btn.onclick = () => {
+                        symbolInput.value = `${item.symbol} (${item.name})`;
+                        finalSymbol.value = item.symbol;
+                        resultsDiv.style.display = 'none';
+                    };
+                    resultsDiv.appendChild(btn);
+                });
+                resultsDiv.style.display = 'block';
+            }
+        } catch(e) {}
     });
 
     document.getElementById('stockForm').onsubmit = async (e) => {
         e.preventDefault();
-        if (!finalSymbol.value) { alert("Alege o acțiune din listă!"); return; }
-        
+        if (!finalSymbol.value) { alert("Selectează o acțiune!"); return; }
         const formData = new FormData();
         formData.append('symbol', finalSymbol.value);
         formData.append('price', document.getElementById('purchasePrice').value);
-        
         await fetch('/add', { method: 'POST', body: formData });
         location.reload();
     };
