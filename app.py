@@ -25,21 +25,23 @@ with app.app_context():
 
 def send_telegram_msg(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text={message}"
-    try: requests.get(url)
+    try: requests.get(url, timeout=10)
     except: print("Eroare Telegram")
 
 def get_last_session_data(symbol):
     try:
-        ticker = yf.Ticker(symbol)
-        # Luam ultimele 5 zile pentru a fi siguri ca prindem ultima sesiune (chiar si dupa weekend/sarbatori)
-        hist = ticker.history(period="5d")
+        # Creăm o sesiune care imită un browser real
+        session = requests.Session()
+        session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
+        
+        ticker = yf.Ticker(symbol, session=session)
+        # Prindem ultimele 7 zile pentru siguranță
+        hist = ticker.history(period="7d")
         
         if hist.empty:
             return None
         
-        # Selectam strict ULTIMA linie (ultima zi de tranzactionare incheiata sau in curs)
         last_day = hist.iloc[-1]
-        
         return {
             "current": last_day['Close'],
             "high": last_day['High'],
@@ -53,31 +55,24 @@ def check_prices():
     with app.app_context():
         stocks = Stock.query.all()
         today = datetime.date.today().isoformat()
-        
         for stock in stocks:
-            if stock.last_alert_date == today:
-                continue
-
+            if stock.last_alert_date == today: continue
             data = get_last_session_data(stock.symbol)
             if not data: continue
-
-            current_price = data['current']
-            last_day_high = data['high']
             
-            alert_triggered = False
+            current = data['current']
+            high = data['high']
+            alert = False
             msg = ""
 
-            # Alerta 5% fata de pretul tau de achizitie (Constantin)
-            if current_price <= stock.purchase_price * 0.95:
-                msg = f"⚠️ {stock.symbol}: Scadere >5% fata de achizitie!\nAchizitie: {stock.purchase_price:.2f}$\nPret actual: {current_price:.2f}$"
-                alert_triggered = True
-            
-            # Alerta 15% fata de MAXIMUL ULTIMEI ZILE de tranzactionare
-            elif current_price <= last_day_high * 0.85:
-                msg = f"📉 {stock.symbol}: Scadere >15% fata de maximul ultimei zile ({data['date']})!\nMaxim zi: {last_day_high:.2f}$\nPret actual: {current_price:.2f}$"
-                alert_triggered = True
+            if current <= stock.purchase_price * 0.95:
+                msg = f"⚠️ {stock.symbol}: -5% vs achizitie\nAcum: {current:.2f}$"
+                alert = True
+            elif current <= high * 0.85:
+                msg = f"📉 {stock.symbol}: -15% vs maxim zi\nMaxim: {high:.2f}$\nAcum: {current:.2f}$"
+                alert = True
 
-            if alert_triggered:
+            if alert:
                 send_telegram_msg(msg)
                 stock.last_alert_date = today
                 db.session.commit()
@@ -95,28 +90,21 @@ def index():
         if data:
             results.append({
                 'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
-                'peak': round(data['high'], 2), 
-                'current': round(data['current'], 2),
-                'date': data['date']
+                'peak': round(data['high'], 2), 'current': round(data['current'], 2), 'date': data['date']
             })
         else:
-            results.append({
-                'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
-                'peak': "N/A", 'current': 0, 'date': "N/A"
-            })
+            results.append({'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price, 'peak': "N/A", 'current': 0, 'date': "N/A"})
     return render_template('index.html', stocks=results)
 
 @app.route('/search')
 def search_stock():
     query = request.args.get('q')
     if not query: return jsonify([])
-    url = f"https://query1.finance.yahoo.com/v1/finance/search?q={query}"
     try:
-        resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={query}"
+        resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
         data = resp.json()
-        output = [{'symbol': q['symbol'], 'name': q.get('shortname', q.get('longname', ''))} 
-                  for q in data.get('quotes', []) if q.get('quoteType') in ['EQUITY', 'ETF']]
-        return jsonify(output)
+        return jsonify([{'symbol': q['symbol'], 'name': q.get('shortname', '')} for q in data.get('quotes', []) if q.get('quoteType') in ['EQUITY', 'ETF']])
     except: return jsonify([])
 
 @app.route('/add', methods=['POST'])
@@ -124,8 +112,7 @@ def add_stock():
     symbol = request.form.get('symbol').upper()
     price = request.form.get('price')
     if not Stock.query.filter_by(symbol=symbol).first():
-        new_stock = Stock(symbol=symbol, purchase_price=float(price))
-        db.session.add(new_stock)
+        db.session.add(Stock(symbol=symbol, purchase_price=float(price)))
         db.session.commit()
     return jsonify({"status": "ok"})
 
