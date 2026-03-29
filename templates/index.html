@@ -18,17 +18,17 @@
     </style>
 </head>
 <body>
-<div class="container py-5">
-    <div class="d-flex justify-content-between align-items-center mb-4">
+<div class="container py-5 text-start">
+    <div class="d-flex justify-content-between align-items-center mb-4 text-start">
         <h2 class="text-primary fw-bold mb-0"><i class="bi bi-wallet2 me-2"></i>Portofoliu Acțiuni</h2>
-        <span class="badge bg-info p-2"><i class="bi bi-calendar-event me-1"></i> Date actualizate (inclusiv Weekend)</span>
+        <span class="badge bg-dark p-2">Referință: Maxim Ultima Sesiune</span>
     </div>
 
     <div class="card p-4 mb-4">
         <form id="stockForm" class="row g-3 align-items-end text-start">
             <div class="col-md-6 search-box">
                 <label class="form-label fw-bold">Caută Acțiune (Nume sau Simbol)</label>
-                <input type="text" id="symbolInput" class="form-control" placeholder="Ex: Google, Tesla, Apple..." autocomplete="off" required>
+                <input type="text" id="symbolInput" class="form-control" placeholder="Ex: Google, Netflix..." autocomplete="off" required>
                 <div id="results" class="results-dropdown list-group list-group-flush text-start"></div>
                 <input type="hidden" id="finalSymbol">
             </div>
@@ -37,20 +37,21 @@
                 <input type="number" id="purchasePrice" class="form-control" step="0.01" required>
             </div>
             <div class="col-md-3">
-                <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">Adaugă Acțiune</button>
+                <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">Adaugă în Listă</button>
             </div>
         </form>
     </div>
 
     <div class="card overflow-hidden">
-        <table class="table table-hover align-middle mb-0 text-start">
+        <table class="table table-hover align-middle mb-0">
             <thead class="table-light">
                 <tr>
                     <th class="ps-4">Simbol</th>
                     <th>Achiziție</th>
-                    <th>Ultimul Vârf (7z)</th>
+                    <th>Maxim Zi Tranz.</th>
+                    <th>Data Sesiune</th>
                     <th>Status</th>
-                    <th class="text-end pe-4">Acțiuni</th>
+                    <th class="text-end pe-4">Șterge</th>
                 </tr>
             </thead>
             <tbody>
@@ -59,15 +60,16 @@
                     <td class="ps-4"><strong>{{ stock.symbol }}</strong></td>
                     <td>${{ stock.buy }}</td>
                     <td class="text-success fw-bold">
-                        {% if stock.peak == "N/A" %} <span class="text-muted small">Căutare date...</span> {% else %} ${{ stock.peak }} {% endif %}
+                        {% if stock.peak == "N/A" %} - {% else %} ${{ stock.peak }} {% endif %}
                     </td>
+                    <td class="text-muted small">{{ stock.date }}</td>
                     <td>
                         {% if stock.peak != "N/A" and stock.buy * 0.95 >= stock.current and stock.current > 0 %}
                             <span class="badge bg-danger">⚠️ Scădere >5%</span>
-                        {% elif stock.peak == "N/A" %}
-                            <span class="badge bg-secondary">Offline</span>
+                        {% elif stock.peak != "N/A" and stock.peak * 0.85 >= stock.current and stock.current > 0 %}
+                            <span class="badge bg-warning text-dark">📉 Scădere >15% vs Maxim</span>
                         {% else %}
-                            <span class="badge bg-success">Monitorizat</span>
+                            <span class="badge bg-success">OK</span>
                         {% endif %}
                     </td>
                     <td class="text-end pe-4">
@@ -88,31 +90,27 @@
     symbolInput.addEventListener('input', async (e) => {
         const query = e.target.value.trim();
         if (query.length < 2) { resultsDiv.style.display = 'none'; return; }
-        try {
-            const response = await fetch(`/search?q=${query}`);
-            const data = await response.json();
-            resultsDiv.innerHTML = '';
-            if (data.length > 0) {
-                data.forEach(item => {
-                    const btn = document.createElement('button');
-                    btn.className = 'list-group-item list-group-item-action text-start';
-                    btn.type = 'button';
-                    btn.innerHTML = `<strong>${item.symbol}</strong> - ${item.name}`;
-                    btn.onclick = () => {
-                        symbolInput.value = `${item.symbol} (${item.name})`;
-                        finalSymbol.value = item.symbol;
-                        resultsDiv.style.display = 'none';
-                    };
-                    resultsDiv.appendChild(btn);
-                });
-                resultsDiv.style.display = 'block';
-            }
-        } catch(e) {}
+        const response = await fetch(`/search?q=${query}`);
+        const data = await response.json();
+        resultsDiv.innerHTML = '';
+        data.forEach(item => {
+            const btn = document.createElement('button');
+            btn.className = 'list-group-item list-group-item-action text-start';
+            btn.type = 'button';
+            btn.innerHTML = `<strong>${item.symbol}</strong> - ${item.name}`;
+            btn.onclick = () => {
+                symbolInput.value = `${item.symbol} (${item.name})`;
+                finalSymbol.value = item.symbol;
+                resultsDiv.style.display = 'none';
+            };
+            resultsDiv.appendChild(btn);
+        });
+        resultsDiv.style.display = 'block';
     });
 
     document.getElementById('stockForm').onsubmit = async (e) => {
         e.preventDefault();
-        if (!finalSymbol.value) { alert("Selectează o acțiune!"); return; }
+        if (!finalSymbol.value) return;
         const formData = new FormData();
         formData.append('symbol', finalSymbol.value);
         formData.append('price', document.getElementById('purchasePrice').value);
