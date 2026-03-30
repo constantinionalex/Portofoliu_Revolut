@@ -16,6 +16,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(instance_pat
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
+# CONFIGURARE
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
 TELEGRAM_TOKEN = os.environ.get('TG_TOKEN')
 TELEGRAM_ID = os.environ.get('TG_ID')
@@ -27,7 +28,7 @@ class Stock(db.Model):
     current_price = db.Column(db.Float, default=0.0) 
     high_price = db.Column(db.Float, default=0.0)    
     last_signal = db.Column(db.String(10), default="HOLD")
-    last_alert_date = db.Column(db.String(20), default="")
+    tech_details = db.Column(db.String(200), default="-")
 
 with app.app_context():
     db.create_all()
@@ -35,33 +36,37 @@ with app.app_context():
 def send_telegram(msg):
     if TELEGRAM_TOKEN and TELEGRAM_ID:
         try: requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text={msg}", timeout=5)
-        except: print("Eroare Telegram")
+        except: print("⚠️ Eroare Telegram")
 
 def get_indicators(symbol):
+    """Sincronizat cu graficul tau: MA10, MACD(12,26,9), STOCH(14,5,5)"""
     base = "https://api.twelvedata.com"
     try:
-        # Preluam datele pentru MA, MACD (12, 26, 9) si Stochastic
+        # MA 10
         ma = requests.get(f"{base}/ma?symbol={symbol}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
-        macd = requests.get(f"{base}/macd?symbol={symbol}&interval=1day&fast_period=12&slow_period=26&signal_period=9&apikey={TWELVE_DATA_KEY}").json()
-        stoch = requests.get(f"{base}/stoch?symbol={symbol}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
+        # MACD
+        macd = requests.get(f"{base}/macd?symbol={symbol}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
+        # STOCH 14, 5, 5
+        stoch = requests.get(f"{base}/stoch?symbol={symbol}&interval=1day&fast_k_period=14&slow_k_period=5&slow_d_period=5&apikey={TWELVE_DATA_KEY}").json()
         
         return {
-            "ma10": float(ma['values'][0]['ma']),
-            "macd_line": float(macd['values'][0]['macd']),
-            "signal_line": float(macd['values'][0]['macd_signal']),
-            "k": float(stoch['values'][0]['slow_k']),
-            "d": float(stoch['values'][0]['slow_d'])
+            "ma10": round(float(ma['values'][0]['ma']), 2),
+            "macd": round(float(macd['values'][0]['macd']), 3),
+            "sig": round(float(macd['values'][0]['macd_signal']), 3),
+            "k": round(float(stoch['values'][0]['slow_k']), 2),
+            "d": round(float(stoch['values'][0]['slow_d']), 2)
         }
-    except Exception as e:
-        print(f"Eroare API {symbol}: {e}")
-        return None
+    except: return None
 
 def check_prices():
+    """Actualizeaza doar preturile (Consum mic)"""
     with app.app_context():
         stocks = Stock.query.all()
         if not stocks: return
         syms = [s.symbol for s in stocks]
-        data = requests.get(f"https://api.twelvedata.com/quote?symbol={','.join(syms)}&apikey={TWELVE_DATA_KEY}").json()
+        url = f"https://api.twelvedata.com/quote?symbol={','.join(syms)}&apikey={TWELVE_DATA_KEY}"
+        data = requests.get(url).json()
+        
         for s in stocks:
             res = data.get(s.symbol) if len(stocks) > 1 else data
             if res and "close" in res:
@@ -70,60 +75,40 @@ def check_prices():
         db.session.commit()
 
 def check_rule_one():
+    """Recalculeaza indicatorii (Consum mediu - Rulare rara)"""
     with app.app_context():
         stocks = Stock.query.all()
         for s in stocks:
-            tech = get_indicators(s.symbol)
-            if not tech: continue
+            t = get_indicators(s.symbol)
+            if not t: continue
             
-            # Debug LOGS
-            print(f"--- Analiza Phil Town: {s.symbol} ---")
-            
-            # 1. Media Mobila 10 zile
-            c1_buy = s.current_price > tech['ma10']
-            c1_sell = s.current_price < tech['ma10']
-            
-            # 2. MACD Crossover (Intersectia liniilor)
-            c2_buy = tech['macd_line'] > tech['signal_line']
-            c2_sell = tech['macd_line'] < tech['signal_line']
-            
-            # 3. Stochastic Crossover
-            c3_buy = tech['k'] > tech['d']
-            c3_sell = tech['k'] < tech['d']
+            # Conditii SELL (Pret < MA SI MACD < Signal SI K < D)
+            c_sell = (s.current_price < t['ma10']) and (t['macd'] < t['sig']) and (t['k'] < t['d'])
+            # Conditii BUY (Pret > MA SI MACD > Signal SI K > D)
+            c_buy = (s.current_price > t['ma10']) and (t['macd'] > t['sig']) and (t['k'] > t['d'])
 
+            s.tech_details = f"MA10:{t['ma10']} | MACD:{t['macd']}/{t['sig']} | ST:{t['k']}/{t['d']}"
+            
             new_status = "HOLD"
-            if c1_buy and c2_buy and c3_buy:
-                new_status = "BUY"
-            elif c1_sell and c2_sell and c3_sell:
-                new_status = "SELL"
+            if c_buy: new_status = "BUY"
+            elif c_sell: new_status = "SELL"
             
             if new_status != s.last_signal:
                 if new_status in ["BUY", "SELL"]:
-                    send_telegram(f"🔔 {s.symbol}: Semnal {new_status} (${s.current_price})")
+                    send_telegram(f"🔔 {s.symbol} {new_status} la ${s.current_price}")
                 s.last_signal = new_status
-            
-            print(f"MA10: {c1_buy}, MACD Cross: {c2_buy}, Stoch Cross: {c3_buy} -> {new_status}")
         db.session.commit()
 
+# SCHEDULER OPTIMIZAT
 sched = BackgroundScheduler()
-sched.add_job(check_prices, 'interval', minutes=3)
-sched.add_job(check_rule_one, 'interval', minutes=60)
+sched.add_job(check_prices, 'interval', minutes=5)    # Pretul la 5 min
+sched.add_job(check_rule_one, 'interval', minutes=60) # Indicatorii la 60 min (economie credite)
 sched.start()
 
 @app.route('/')
 def index():
     stocks = Stock.query.all()
-    ui = []
-    for s in stocks:
-        profit = round(((s.current_price - s.purchase_price) / s.purchase_price * 100), 2) if s.current_price > 0 else 0
-        ui.append({'id':s.id, 'symbol':s.symbol, 'buy':s.purchase_price, 'current':s.current_price, 'high':s.high_price, 'signal':s.last_signal, 'profit':profit})
-    return render_template('index.html', stocks=ui)
-
-@app.route('/search')
-def search():
-    q = request.args.get('q', '')
-    r = requests.get(f"https://query1.finance.yahoo.com/v1/finance/search?q={q}", headers={'User-Agent': 'Mozilla/5.0'})
-    return jsonify([{'symbol': x['symbol'], 'name': x.get('shortname', '')} for x in r.json().get('quotes', []) if x.get('quoteType') in ['EQUITY', 'ETF']])
+    return render_template('index.html', stocks=stocks)
 
 @app.route('/add', methods=['POST'])
 def add():
@@ -131,7 +116,9 @@ def add():
     if not Stock.query.filter_by(symbol=s).first():
         db.session.add(Stock(symbol=s, purchase_price=p))
         db.session.commit()
-        check_prices(); check_rule_one()
+        # Forțează actualizarea imediată pentru noua acțiune
+        check_prices()
+        check_rule_one()
     return jsonify({"status": "ok"})
 
 @app.route('/delete/<int:id>', methods=['DELETE'])
@@ -139,6 +126,12 @@ def delete(id):
     s = db.session.get(Stock, id)
     if s: db.session.delete(s); db.session.commit()
     return jsonify({"status": "ok"})
+
+@app.route('/search')
+def search():
+    q = request.args.get('q', '')
+    r = requests.get(f"https://query1.finance.yahoo.com/v1/finance/search?q={q}", headers={'User-Agent': 'Mozilla/5.0'})
+    return jsonify([{'symbol': x['symbol'], 'name': x.get('shortname', '')} for x in r.json().get('quotes', []) if x.get('quoteType') in ['EQUITY', 'ETF']])
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
