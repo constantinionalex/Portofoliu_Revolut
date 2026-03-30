@@ -3,10 +3,10 @@ import datetime
 import requests
 from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
-# Baza de date locala pentru a stoca preturile (Cache)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///portfolio.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -20,12 +20,23 @@ class Stock(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     symbol = db.Column(db.String(10), unique=True, nullable=False)
     purchase_price = db.Column(db.Float, nullable=False)
-    current_price = db.Column(db.Float, default=0.0)  # Salvam pretul aici
-    high_price = db.Column(db.Float, default=0.0)     # Salvam maximul aici
+    current_price = db.Column(db.Float, default=0.0) 
+    high_price = db.Column(db.Float, default=0.0)    
     last_alert_date = db.Column(db.String(20), default="")
 
+# --- LOGICA DE REPARARE AUTOMATA A BAZEI DE DATE ---
 with app.app_context():
     db.create_all()
+    # Incercam sa adaugam coloanele noi in cazul in care baza de date exista deja
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text("ALTER TABLE stock ADD COLUMN current_price FLOAT DEFAULT 0.0"))
+            conn.execute(text("ALTER TABLE stock ADD COLUMN high_price FLOAT DEFAULT 0.0"))
+            conn.commit()
+            print("✅ Coloanele lipsă au fost adăugate cu succes.")
+    except Exception as e:
+        # Daca coloanele exista deja, va da eroare si trecem peste (e normal)
+        print("ℹ️ Structura bazei de date este deja la zi.")
 
 def send_telegram_msg(message):
     if not TELEGRAM_TOKEN: return
@@ -40,38 +51,29 @@ def get_batch_data(symbols):
         url = f"https://api.twelvedata.com/quote?symbol={sym_str}&apikey={TWELVE_DATA_KEY}"
         response = requests.get(url, timeout=15).json()
         
-        # Verificam daca API-ul a intors o eroare de limita
         if isinstance(response, dict) and response.get("status") == "error":
             print(f"⚠️ Limita API: {response.get('message')}")
             return None
-            
-        if len(symbols) == 1:
-            return {symbols[0]: response}
-        return response
+        return {symbols[0]: response} if len(symbols) == 1 else response
     except:
         return None
 
 def check_prices():
-    """Functia care ruleaza la 3 min si actualizeaza Baza de Date"""
     with app.app_context():
         stocks = Stock.query.all()
         if not stocks: return
         
         symbols = [s.symbol for s in stocks]
         data_cloud = get_batch_data(symbols)
-        
-        if data_cloud is None:
-            return # Nu facem update daca API-ul a dat eroare
+        if data_cloud is None: return
 
         today = datetime.date.today().isoformat()
         for stock in stocks:
             res = data_cloud.get(stock.symbol)
             if res and "close" in res:
-                # Actualizam valorile in DB (Cache)
                 stock.current_price = float(res['close'])
                 stock.high_price = float(res['high'])
                 
-                # Logica de alerte
                 if stock.last_alert_date != today:
                     alert_sent = False
                     if stock.current_price <= stock.purchase_price * 0.95:
@@ -80,21 +82,16 @@ def check_prices():
                     elif stock.current_price <= stock.high_price * 0.85:
                         send_telegram_msg(f"📉 {stock.symbol}: -15% vs maxim ({stock.current_price}$)")
                         alert_sent = True
-                    
-                    if alert_sent:
-                        stock.last_alert_date = today
-        
+                    if alert_sent: stock.last_alert_date = today
         db.session.commit()
-        print(f"✅ [{datetime.datetime.now().strftime('%H:%M:%S')}] DB Actualizata.")
+        print(f"✅ DB Actualizata la {datetime.datetime.now().strftime('%H:%M:%S')}")
 
-# Pornim monitorizarea la 3 minute
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=check_prices, trigger="interval", minutes=3)
 scheduler.start()
 
 @app.route('/')
 def index():
-    # Citim DOAR din baza de date (fara apeluri API la refresh)
     stocks = Stock.query.all()
     results = []
     for s in stocks:
@@ -123,13 +120,11 @@ def add_stock():
     if symbol and not Stock.query.filter_by(symbol=symbol).first():
         db.session.add(Stock(symbol=symbol, purchase_price=float(price)))
         db.session.commit()
-        # Fortam o actualizare imediata pentru noua actiune
         check_prices()
     return jsonify({"status": "ok"})
 
 @app.route('/delete/<int:id>', methods=['DELETE'])
 def delete_stock(id):
-    # Folosim Session.get() pentru a evita Legacy Warning
     stock = db.session.get(Stock, id)
     if stock:
         db.session.delete(stock)
