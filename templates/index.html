@@ -2,108 +2,125 @@
 <html lang="ro">
 <head>
     <meta charset="UTF-8">
-    <title>Portofoliu Actiuni - Monitorizare 3min</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Portofoliu Revolut</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #f8f9fa; }
-        .card { border-radius: 15px; border: none; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-        .results-dropdown { position: absolute; width: 100%; z-index: 1000; background: white; display: none; border: 1px solid #ddd; }
+        body { background-color: #f8f9fa; padding-top: 20px; font-size: 14px; }
+        .container { max-width: 800px; }
+        .card { border-radius: 15px; border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .table-responsive { border-radius: 10px; }
+        .profit-pos { color: #28a745; font-weight: bold; }
+        .profit-neg { color: #dc3545; font-weight: bold; }
+        #autocomplete-results { 
+            position: absolute; z-index: 1000; width: 100%; 
+            max-height: 200px; overflow-y: auto; cursor: pointer;
+        }
+        /* Ajustari specifice pentru mobil */
+        @media (max-width: 576px) {
+            h2 { font-size: 1.5rem; }
+            .btn-sm-custom { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+            td, th { padding: 8px 4px !important; font-size: 13px; }
+        }
     </style>
 </head>
 <body>
-<div class="container py-5 text-start">
-    <h2 class="mb-4 text-primary fw-bold">🚀 Monitorizare Portofoliu (Batch)</h2>
 
-    <div class="card p-4 mb-4">
-        <form id="stockForm" class="row g-3 align-items-end">
-            <div class="col-md-6 position-relative">
-                <label class="form-label fw-bold">Nume sau Simbol</label>
-                <input type="text" id="symbolInput" class="form-control" placeholder="Cauta actiune..." autocomplete="off" required>
-                <div id="results" class="results-dropdown list-group shadow"></div>
-                <input type="hidden" id="finalSymbol">
+<div class="container">
+    <div class="card p-3 mb-4">
+        <h2 class="text-center mb-3">📈 Monitorizare Revolut</h2>
+        
+        <div class="row g-2 mb-3 position-relative">
+            <div class="col-7">
+                <input type="text" id="symbol" class="form-control" placeholder="Caută acțiune (ex: NVDA)" autocomplete="off">
+                <div id="autocomplete-results" class="list-group"></div>
             </div>
-            <div class="col-md-3">
-                <label class="form-label fw-bold">Pret Achizitie ($)</label>
-                <input type="number" id="purchasePrice" class="form-control" step="0.01" required>
+            <div class="col-3">
+                <input type="number" id="price" class="form-control" placeholder="Preț $">
             </div>
-            <div class="col-md-3">
-                <button type="submit" class="btn btn-primary w-100 fw-bold">Adauga Actiune</button>
+            <div class="col-2 d-grid">
+                <button onclick="addStock()" class="btn btn-primary btn-sm-custom">+</button>
             </div>
-        </form>
-    </div>
+        </div>
 
-    <div class="card overflow-hidden">
-        <table class="table table-hover mb-0">
-            <thead class="table-dark">
-                <tr>
-                    <th class="ps-4">Simbol</th>
-                    <th>Achizitie</th>
-                    <th>Pret Curent</th>
-                    <th>Maxim Zi</th>
-                    <th>Evolutie (%)</th>
-                    <th class="text-end pe-4">Actiuni</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for stock in stocks %}
-                <tr>
-                    <td class="ps-4"><strong>{{ stock.symbol }}</strong></td>
-                    <td>${{ stock.buy }}</td>
-                    <td class="text-primary fw-bold">${{ stock.current }}</td>
-                    <td class="text-success">${{ stock.high }}</td>
-                    <td class="fw-bold {% if stock.profit >= 0 %}text-success{% else %}text-danger{% endif %}">
-                        {{ stock.profit }}%
-                    </td>
-                    <td class="text-end pe-4">
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteStock({{ stock.id }})">Sterge</button>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Simbol</th>
+                        <th>Buy</th>
+                        <th>Preț</th>
+                        <th>Max Zi</th>
+                        <th>+/-</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="stock-table">
+                    {% for s in stocks %}
+                    <tr>
+                        <td><strong>{{ s.symbol }}</strong></td>
+                        <td>${{ s.buy }}</td>
+                        <td>${{ s.current }}</td>
+                        <td class="text-muted">${{ s.high }}</td>
+                        <td class="{{ 'profit-pos' if s.profit >= 0 else 'profit-neg' }}">
+                            {{ s.profit }}%
+                        </td>
+                        <td class="text-end">
+                            <button onclick="deleteStock({{ s.id }})" class="btn btn-outline-danger btn-sm">×</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="text-center text-muted mt-2" style="font-size: 11px;">Update automat la fiecare 3 minute</p>
     </div>
 </div>
 
 <script>
-    const symbolInput = document.getElementById('symbolInput');
-    const resultsDiv = document.getElementById('results');
-    const finalSymbol = document.getElementById('finalSymbol');
+    // Search Autocomplete
+    const input = document.getElementById('symbol');
+    const results = document.getElementById('autocomplete-results');
 
-    symbolInput.addEventListener('input', async (e) => {
-        const query = e.target.value;
-        if (query.length < 2) { resultsDiv.style.display = 'none'; return; }
-        const res = await fetch(`/search?q=${query}`);
-        const data = await res.json();
-        resultsDiv.innerHTML = '';
-        data.forEach(item => {
-            const btn = document.createElement('button');
-            btn.className = 'list-group-item list-group-item-action text-start';
-            btn.innerHTML = `<strong>${item.symbol}</strong> - ${item.name}`;
-            btn.onclick = () => {
-                symbolInput.value = item.symbol;
-                finalSymbol.value = item.symbol;
-                resultsDiv.style.display = 'none';
-            };
-            resultsDiv.appendChild(btn);
-        });
-        resultsDiv.style.display = 'block';
+    input.addEventListener('input', async () => {
+        const q = input.value;
+        if (q.length < 2) { results.innerHTML = ''; return; }
+        
+        const resp = await fetch(`/search?q=${q}`);
+        const data = await resp.json();
+        
+        results.innerHTML = data.map(item => `
+            <button class="list-group-item list-group-item-action" onclick="selectSymbol('${item.symbol}')">
+                <strong>${item.symbol}</strong> - <small>${item.name}</small>
+            </button>
+        `).join('');
     });
 
-    document.getElementById('stockForm').onsubmit = async (e) => {
-        e.preventDefault();
+    function selectSymbol(sym) {
+        input.value = sym;
+        results.innerHTML = '';
+    }
+
+    async function addStock() {
+        const sym = input.value;
+        const prc = document.getElementById('price').value;
+        if(!sym || !prc) return;
+
         const formData = new FormData();
-        formData.append('symbol', finalSymbol.value);
-        formData.append('price', document.getElementById('purchasePrice').value);
+        formData.append('symbol', sym);
+        formData.append('price', prc);
+
         await fetch('/add', { method: 'POST', body: formData });
         location.reload();
-    };
+    }
 
     async function deleteStock(id) {
-        if (confirm('Sigur vrei sa stergi monitorizarea?')) {
+        if(confirm('Ștergi această acțiune?')) {
             await fetch(`/delete/${id}`, { method: 'DELETE' });
             location.reload();
         }
     }
 </script>
+
 </body>
 </html>
