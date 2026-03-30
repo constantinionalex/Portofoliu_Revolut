@@ -11,8 +11,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///portfolio.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# CONFIGURARE
-TWELVE_DATA_KEY = "10f7aeb538ed4f709079dbe22841590b"
+# CONFIGURARE - API NOU
+TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
 TELEGRAM_TOKEN = os.environ.get('TG_TOKEN')
 TELEGRAM_ID = os.environ.get('TG_ID')
 
@@ -24,37 +24,29 @@ class Stock(db.Model):
     high_price = db.Column(db.Float, default=0.0)    
     last_alert_date = db.Column(db.String(20), default="")
 
-# --- LOGICA DE REPARARE AUTOMATA A BAZEI DE DATE ---
+# REPARARE AUTOMATĂ LA PORNIRE
 with app.app_context():
     db.create_all()
-    # Incercam sa adaugam coloanele noi in cazul in care baza de date exista deja
-    try:
-        with db.engine.connect() as conn:
-            conn.execute(text("ALTER TABLE stock ADD COLUMN current_price FLOAT DEFAULT 0.0"))
-            conn.execute(text("ALTER TABLE stock ADD COLUMN high_price FLOAT DEFAULT 0.0"))
-            conn.commit()
-            print("✅ Coloanele lipsă au fost adăugate cu succes.")
-    except Exception as e:
-        # Daca coloanele exista deja, va da eroare si trecem peste (e normal)
-        print("ℹ️ Structura bazei de date este deja la zi.")
-
-def send_telegram_msg(message):
-    if not TELEGRAM_TOKEN: return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text={message}"
-    try: requests.get(url, timeout=10)
-    except: print("Eroare Telegram")
+    for col in ["current_price", "high_price"]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE stock ADD COLUMN {col} FLOAT DEFAULT 0.0"))
+                conn.commit()
+                print(f"✅ Coloana {col} a fost adaugata cu succes.")
+        except:
+            pass # Coloana exista deja, totul e ok
 
 def get_batch_data(symbols):
     if not symbols: return {}
     try:
         sym_str = ",".join(symbols)
         url = f"https://api.twelvedata.com/quote?symbol={sym_str}&apikey={TWELVE_DATA_KEY}"
-        response = requests.get(url, timeout=15).json()
+        resp = requests.get(url, timeout=15).json()
         
-        if isinstance(response, dict) and response.get("status") == "error":
-            print(f"⚠️ Limita API: {response.get('message')}")
+        if isinstance(resp, dict) and resp.get("status") == "error":
+            print(f"❌ API Error: {resp.get('message')}")
             return None
-        return {symbols[0]: response} if len(symbols) == 1 else response
+        return {symbols[0]: resp} if len(symbols) == 1 else resp
     except:
         return None
 
@@ -63,29 +55,31 @@ def check_prices():
         stocks = Stock.query.all()
         if not stocks: return
         
-        symbols = [s.symbol for s in stocks]
-        data_cloud = get_batch_data(symbols)
-        if data_cloud is None: return
+        data = get_batch_data([s.symbol for s in stocks])
+        if not data: return
 
         today = datetime.date.today().isoformat()
-        for stock in stocks:
-            res = data_cloud.get(stock.symbol)
+        for s in stocks:
+            res = data.get(s.symbol)
             if res and "close" in res:
-                stock.current_price = float(res['close'])
-                stock.high_price = float(res['high'])
+                s.current_price = float(res['close'])
+                s.high_price = float(res['high'])
                 
-                if stock.last_alert_date != today:
-                    alert_sent = False
-                    if stock.current_price <= stock.purchase_price * 0.95:
-                        send_telegram_msg(f"⚠️ {stock.symbol}: -5% vs achizitie ({stock.current_price}$)")
-                        alert_sent = True
-                    elif stock.current_price <= stock.high_price * 0.85:
-                        send_telegram_msg(f"📉 {stock.symbol}: -15% vs maxim ({stock.current_price}$)")
-                        alert_sent = True
-                    if alert_sent: stock.last_alert_date = today
+                # Alerte Telegram
+                if s.last_alert_date != today:
+                    msg = ""
+                    if s.current_price <= s.purchase_price * 0.95:
+                        msg = f"⚠️ {s.symbol}: -5% ({s.current_price}$)"
+                    elif s.current_price <= s.high_price * 0.85:
+                        msg = f"📉 {s.symbol}: -15% vs Maxim ({s.current_price}$)"
+                    
+                    if msg and TELEGRAM_TOKEN:
+                        requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text={msg}")
+                        s.last_alert_date = today
         db.session.commit()
-        print(f"✅ DB Actualizata la {datetime.datetime.now().strftime('%H:%M:%S')}")
+        print(f"🔄 Update reusit la {datetime.datetime.now().strftime('%H:%M:%S')}")
 
+# Pornire Scheduler
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=check_prices, trigger="interval", minutes=3)
 scheduler.start()
@@ -93,41 +87,31 @@ scheduler.start()
 @app.route('/')
 def index():
     stocks = Stock.query.all()
-    results = []
+    ui_data = []
     for s in stocks:
         profit = ((s.current_price - s.purchase_price) / s.purchase_price * 100) if s.current_price > 0 else 0
-        results.append({
+        ui_data.append({
             'id': s.id, 'symbol': s.symbol, 'buy': s.purchase_price,
             'current': round(s.current_price, 2), 'high': round(s.high_price, 2),
             'profit': round(profit, 2)
         })
-    return render_template('index.html', stocks=results)
-
-@app.route('/search')
-def search_stock():
-    query = request.args.get('q')
-    if not query: return jsonify([])
-    try:
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={query}"
-        resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-        return jsonify([{'symbol': q['symbol'], 'name': q.get('shortname', '')} for q in resp.json().get('quotes', []) if q.get('quoteType') == 'EQUITY'])
-    except: return jsonify([])
+    return render_template('index.html', stocks=ui_data)
 
 @app.route('/add', methods=['POST'])
 def add_stock():
     symbol = request.form.get('symbol', '').upper()
-    price = request.form.get('price', 0)
+    price = float(request.form.get('price', 0))
     if symbol and not Stock.query.filter_by(symbol=symbol).first():
-        db.session.add(Stock(symbol=symbol, purchase_price=float(price)))
+        db.session.add(Stock(symbol=symbol, purchase_price=price))
         db.session.commit()
         check_prices()
     return jsonify({"status": "ok"})
 
 @app.route('/delete/<int:id>', methods=['DELETE'])
 def delete_stock(id):
-    stock = db.session.get(Stock, id)
-    if stock:
-        db.session.delete(stock)
+    s = db.session.get(Stock, id)
+    if s:
+        db.session.delete(s)
         db.session.commit()
     return jsonify({"status": "ok"})
 
