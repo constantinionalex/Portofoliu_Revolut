@@ -14,8 +14,8 @@ db = SQLAlchemy(app)
 # --- CONFIGURARE ---
 # Înlocuiește cu datele tale reale
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
-TELEGRAM_TOKEN = "TOKEN_UL_TAU_AICI"
-TELEGRAM_CHAT_ID = "ID_UL_TAU_AICI"
+TELEGRAM_TOKEN = "8722371365:AAGiQ8g9M2LPNQIsYaM6V0KApwkKaJTi5vg"
+TELEGRAM_CHAT_ID = "8708984447"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
 class Stock(db.Model):
