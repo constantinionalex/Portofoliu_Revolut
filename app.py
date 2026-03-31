@@ -12,9 +12,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
 # --- CONFIGURARE ---
+# Înlocuiește cu datele tale reale
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
-TELEGRAM_TOKEN = "AICI_INTRODU_TOKEN_BOT"
-TELEGRAM_CHAT_ID = "AICI_INTRODU_CHAT_ID"
+TELEGRAM_TOKEN = "TOKEN_UL_TAU_AICI"
+TELEGRAM_CHAT_ID = "ID_UL_TAU_AICI"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
 class Stock(db.Model):
@@ -31,6 +32,7 @@ with app.app_context():
     db.create_all()
 
 def send_telegram(message):
+    """Trimite notificare pe Telegram fără a bloca serverul"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=5)
@@ -38,6 +40,7 @@ def send_telegram(message):
         pass
 
 def calculate_ro_indicators(prices):
+    """Calcul local MA10, MACD și RSI pentru BVB"""
     if len(prices) < 30: return None, None, None, None
     ma10 = sum(prices[-10:]) / 10
     ema12 = sum(prices[-12:]) / 12
@@ -57,6 +60,7 @@ def update_worker():
             sym = s.symbol.upper()
             old_signal = s.last_signal
             
+            # --- LOGICA ROMÂNIA ---
             if ".RO" in sym or ".BVB" in sym:
                 try:
                     clean_sym = sym.replace(".BVB", ".RO")
@@ -71,29 +75,36 @@ def update_worker():
                         c_sell = (s.current_price < ma10) or (macd < sig)
                         s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                         s.tech_details = f"MA:{ma10} | MACD:{macd} | RSI:{rsi}"
-                except: s.tech_details = "Eroare BVB"
+                except: s.tech_details = "Eroare date BVB"
+
+            # --- LOGICA SUA (Phil Town Original) ---
             else:
                 try:
                     base = "https://api.twelvedata.com"
                     p_res = requests.get(f"{base}/quote?symbol={sym}&apikey={TWELVE_DATA_KEY}").json()
                     if "close" in p_res: s.current_price = float(p_res['close'])
-                    time.sleep(12)
+                    time.sleep(12) # Respectăm limita API Free
                     ma = requests.get(f"{base}/ma?symbol={sym}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
                     time.sleep(12)
                     macd = requests.get(f"{base}/macd?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
                     time.sleep(12)
                     stoch = requests.get(f"{base}/stoch?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
+                    
                     m_v = float(ma['values'][0]['ma'])
                     md_v, ms_v = float(macd['values'][0]['macd']), float(macd['values'][0]['macd_signal'])
                     sk_v, sd_v = float(stoch['values'][0]['slow_k']), float(stoch['values'][0]['slow_d'])
+                    
+                    # Orice indicator sub medie/semnal declanșează SELL
                     c_buy = (s.current_price > m_v) and (md_v > ms_v) and (sk_v > sd_v)
                     c_sell = (s.current_price < m_v) or (md_v < ms_v)
                     s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                     s.tech_details = f"MA:{round(m_v,1)} | MACD:{round(md_v,2)}/{round(ms_v,2)} | ST:{round(sk_v,1)}/{round(sd_v,1)}"
-                except: s.tech_details = "Limită API SUA"
+                except: s.tech_details = "Limită API depășită"
 
+            # Trimitem alertă dacă semnalul s-a schimbat
             if s.last_signal != old_signal and s.last_signal in ["BUY", "SELL"]:
-                send_telegram(f"🔔 ALERTĂ {sym}: Semnal nou {s.last_signal} la prețul {s.current_price}")
+                send_telegram(f"🔔 ALERTĂ {sym}: Semnal {s.last_signal} la prețul {s.current_price}")
+            
             db.session.commit()
             if not (".RO" in sym or ".BVB" in sym): time.sleep(2)
 
