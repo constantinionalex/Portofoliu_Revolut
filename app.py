@@ -18,7 +18,6 @@ db = SQLAlchemy(app)
 
 # CONFIGURARE
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
 
 class Stock(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -31,39 +30,41 @@ class Stock(db.Model):
 with app.app_context():
     db.create_all()
 
-def fetch_bvb_price(symbol):
-    """Interogare Yahoo Finance pentru prețuri BVB (ex: H2O.BVB)"""
-    # Yahoo folosește .BVB pentru Bursa de Valori București
-    clean_s = symbol.upper().replace(".RO", ".BVB")
-    if ".BVB" not in clean_s and any(x in clean_s for x in ["H2O", "SNN", "SNP", "TLV", "FP"]):
-        clean_s += ".BVB"
+def fetch_stooq_price(symbol):
+    """Preluare preț BVB de pe Stooq (mult mai stabil decât Yahoo)"""
+    # Stooq folosește formatul SIMBOL.RO pentru România
+    s = symbol.upper().replace(".BVB", ".RO")
+    if ".RO" not in s: s += ".RO"
     
-    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={clean_s}"
+    url = f"https://stooq.com/q/l/?s={s}&f=sd2t2ohlc&h&e=json"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(url, timeout=10)
         data = r.json()
-        if 'quoteResponse' in data and data['quoteResponse']['result']:
-            result = data['quoteResponse']['result'][0]
-            return float(result['regularMarketPrice'])
+        # Stooq returnează o listă de simboluri
+        if "symbols" in data and data["symbols"]:
+            price = data["symbols"][0].get("close")
+            return float(price) if price else None
     except Exception as e:
-        print(f"Eroare Yahoo BVB pentru {symbol}: {e}")
+        print(f"Eroare Stooq pentru {symbol}: {e}")
     return None
 
 def update_background_task():
-    """Rulează actualizarea acțiunilor rând pe rând în fundal"""
+    """Actualizare în fundal cu protecție la limitele API"""
     with app.app_context():
         stocks = Stock.query.all()
         for s in stocks:
-            # --- PIAȚA ROMÂNIA ---
-            if ".RO" in s.symbol or ".BVB" in s.symbol or any(x in s.symbol for x in ["H2O", "SNN", "SNP"]):
-                price = fetch_bvb_price(s.symbol)
+            # --- PIAȚA ROMÂNIA (STOOQ) ---
+            if ".RO" in s.symbol or ".BVB" in s.symbol or any(x in s.symbol for x in ["H2O", "SNN", "SNP", "TLV"]):
+                price = fetch_stooq_price(s.symbol)
                 if price:
                     s.current_price = price
-                    s.tech_details = f"Preț: {price} RON (Yahoo)"
+                    s.tech_details = f"Preț RO: {price} RON (Stooq)"
                     s.last_signal = "HOLD"
+                else:
+                    s.tech_details = "Simbol RO negăsit pe Stooq"
                 db.session.commit()
             
-            # --- PIAȚA SUA (Rule #1) ---
+            # --- PIAȚA SUA (TWELVE DATA) ---
             else:
                 try:
                     base = "https://api.twelvedata.com"
@@ -71,15 +72,14 @@ def update_background_task():
                     p_res = requests.get(f"{base}/quote?symbol={s.symbol}&apikey={TWELVE_DATA_KEY}").json()
                     if "close" in p_res: s.current_price = float(p_res['close'])
                     
-                    # 2. Indicatori (cu pauze pentru limită API)
-                    time.sleep(8)
+                    # 2. Indicatori (Așteptăm 12 secunde între acțiuni pentru a nu depăși 8 req/min)
+                    time.sleep(12) 
                     ma = requests.get(f"{base}/ma?symbol={s.symbol}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
-                    time.sleep(8)
+                    time.sleep(1) # Pauză scurtă
                     macd = requests.get(f"{base}/macd?symbol={s.symbol}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
-                    time.sleep(8)
+                    time.sleep(1)
                     stoch = requests.get(f"{base}/stoch?symbol={s.symbol}&interval=1day&fast_k_period=14&slow_k_period=5&slow_d_period=5&apikey={TWELVE_DATA_KEY}").json()
                     
-                    # Calcule $MA(10)$, $MACD(12,26,9)$ și $Stochastic(14,5,5)$
                     m = float(ma['values'][0]['ma'])
                     md, ms = float(macd['values'][0]['macd']), float(macd['values'][0]['macd_signal'])
                     sk, sd = float(stoch['values'][0]['slow_k']), float(stoch['values'][0]['slow_d'])
@@ -90,10 +90,11 @@ def update_background_task():
                     s.tech_details = f"MA:{round(m,1)} | MACD:{round(md,2)}/{round(ms,2)} | ST:{round(sk,1)}/{round(sd,1)}"
                     s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                 except:
-                    s.tech_details = "Limită API TwelveData depășită"
+                    s.tech_details = "Limită API TwelveData depășită (Așteaptă)"
                 
                 db.session.commit()
-                time.sleep(2)
+                # Pauză generoasă ca să nu blocăm cheia API
+                time.sleep(5)
 
 # Scheduler
 sched = BackgroundScheduler()
@@ -109,18 +110,13 @@ def index():
 def search():
     q = request.args.get('q', '').upper()
     if len(q) < 2: return jsonify([])
+    # Căutăm prin Yahoo Search doar pentru sugestii de nume
     try:
         url = f"https://query1.finance.yahoo.com/v1/finance/search?q={q}"
-        r = requests.get(url, headers=HEADERS, timeout=5)
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
         data = r.json()
-        output = []
-        for x in data.get('quotes', []):
-            # Filtrăm pentru a include și BVB și SUA
-            if x.get('quoteType') in ['EQUITY', 'ETF']:
-                output.append({'symbol': x['symbol'], 'name': x.get('shortname', '')})
-        return jsonify(output)
-    except:
-        return jsonify([])
+        return jsonify([{'symbol': x['symbol'], 'name': x.get('shortname', '')} for x in data.get('quotes', [])])
+    except: return jsonify([])
 
 @app.route('/add', methods=['POST'])
 def add():
@@ -129,12 +125,10 @@ def add():
     if s and not Stock.query.filter_by(symbol=s).first():
         db.session.add(Stock(symbol=s, purchase_price=p))
         db.session.commit()
-        # Pornim un update rapid în fundal doar pentru această acțiune dacă e nevoie
     return jsonify({"status": "ok"})
 
 @app.route('/refresh_manual')
 def refresh_manual():
-    # Pornim thread-ul pentru a evita 502 Bad Gateway
     threading.Thread(target=update_background_task).start()
     return jsonify({"status": "Pornit"})
 
