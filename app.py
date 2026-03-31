@@ -1,22 +1,16 @@
 import os
-import datetime
+import time
 import requests
 from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname(__file__))
-instance_path = os.path.join(basedir, 'instance')
-if not os.path.exists(instance_path):
-    os.makedirs(instance_path)
-
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(instance_path, 'portfolio.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'instance', 'portfolio.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# CONFIGURARE
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
 TELEGRAM_TOKEN = os.environ.get('TG_TOKEN')
 TELEGRAM_ID = os.environ.get('TG_ID')
@@ -25,84 +19,72 @@ class Stock(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     symbol = db.Column(db.String(10), unique=True, nullable=False)
     purchase_price = db.Column(db.Float, nullable=False)
-    current_price = db.Column(db.Float, default=0.0) 
-    high_price = db.Column(db.Float, default=0.0)    
+    current_price = db.Column(db.Float, default=0.0)
     last_signal = db.Column(db.String(10), default="HOLD")
-    tech_details = db.Column(db.String(200), default="-")
+    tech_details = db.Column(db.String(200), default="Se încarcă...")
 
 with app.app_context():
     db.create_all()
 
-def send_telegram(msg):
-    if TELEGRAM_TOKEN and TELEGRAM_ID:
-        try: requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text={msg}", timeout=5)
-        except: print("⚠️ Eroare Telegram")
-
 def get_indicators(symbol):
-    """Sincronizat cu graficul tau: MA10, MACD(12,26,9), STOCH(14,5,5)"""
     base = "https://api.twelvedata.com"
     try:
         # MA 10
         ma = requests.get(f"{base}/ma?symbol={symbol}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
+        time.sleep(8) # Pauză obligatorie pentru limita de 8 req/min
+        
         # MACD
         macd = requests.get(f"{base}/macd?symbol={symbol}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
+        time.sleep(8)
+        
         # STOCH 14, 5, 5
         stoch = requests.get(f"{base}/stoch?symbol={symbol}&interval=1day&fast_k_period=14&slow_k_period=5&slow_d_period=5&apikey={TWELVE_DATA_KEY}").json()
         
         return {
-            "ma10": round(float(ma['values'][0]['ma']), 2),
-            "macd": round(float(macd['values'][0]['macd']), 3),
-            "sig": round(float(macd['values'][0]['macd_signal']), 3),
-            "k": round(float(stoch['values'][0]['slow_k']), 2),
-            "d": round(float(stoch['values'][0]['slow_d']), 2)
+            "ma": float(ma['values'][0]['ma']),
+            "macd": float(macd['values'][0]['macd']),
+            "sig": float(macd['values'][0]['macd_signal']),
+            "k": float(stoch['values'][0]['slow_k']),
+            "d": float(stoch['values'][0]['slow_d'])
         }
-    except: return None
+    except Exception as e:
+        print(f"Eroare API {symbol}: {e}")
+        return None
 
-def check_prices():
-    """Actualizeaza doar preturile (Consum mic)"""
+def update_all():
     with app.app_context():
         stocks = Stock.query.all()
         if not stocks: return
-        syms = [s.symbol for s in stocks]
-        url = f"https://api.twelvedata.com/quote?symbol={','.join(syms)}&apikey={TWELVE_DATA_KEY}"
-        data = requests.get(url).json()
+        
+        # 1. Update Prețuri (1 singur apel batch)
+        syms = ",".join([s.symbol for s in stocks])
+        prices = requests.get(f"https://api.twelvedata.com/quote?symbol={syms}&apikey={TWELVE_DATA_KEY}").json()
         
         for s in stocks:
-            res = data.get(s.symbol) if len(stocks) > 1 else data
-            if res and "close" in res:
-                s.current_price = float(res['close'])
-                s.high_price = float(res.get('high', 0))
-        db.session.commit()
-
-def check_rule_one():
-    """Recalculeaza indicatorii (Consum mediu - Rulare rara)"""
-    with app.app_context():
-        stocks = Stock.query.all()
-        for s in stocks:
+            p_data = prices.get(s.symbol) if len(stocks) > 1 else prices
+            if p_data and "close" in p_data:
+                s.current_price = float(p_data['close'])
+            
+            # 2. Update Indicatori (Pe rând, cu pauză)
             t = get_indicators(s.symbol)
-            if not t: continue
-            
-            # Conditii SELL (Pret < MA SI MACD < Signal SI K < D)
-            c_sell = (s.current_price < t['ma10']) and (t['macd'] < t['sig']) and (t['k'] < t['d'])
-            # Conditii BUY (Pret > MA SI MACD > Signal SI K > D)
-            c_buy = (s.current_price > t['ma10']) and (t['macd'] > t['sig']) and (t['k'] > t['d'])
-
-            s.tech_details = f"MA10:{t['ma10']} | MACD:{t['macd']}/{t['sig']} | ST:{t['k']}/{t['d']}"
-            
-            new_status = "HOLD"
-            if c_buy: new_status = "BUY"
-            elif c_sell: new_status = "SELL"
-            
-            if new_status != s.last_signal:
-                if new_status in ["BUY", "SELL"]:
-                    send_telegram(f"🔔 {s.symbol} {new_status} la ${s.current_price}")
+            if t:
+                c_sell = (s.current_price < t['ma']) and (t['macd'] < t['sig']) and (t['k'] < t['d'])
+                c_buy = (s.current_price > t['ma']) and (t['macd'] > t['sig']) and (t['k'] > t['d'])
+                
+                s.tech_details = f"MA:{round(t['ma'],2)} | MACD:{round(t['macd'],2)}/{round(t['sig'],2)} | ST:{round(t['k'],1)}/{round(t['d'],1)}"
+                new_status = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
+                
+                if new_status != s.last_signal and new_status != "HOLD":
+                    requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text=📢 {s.symbol}: {new_status} (${s.current_price})")
                 s.last_signal = new_status
-        db.session.commit()
+            else:
+                s.tech_details = "Eroare Limită API (Așteaptă)"
+            
+            db.session.commit()
+            time.sleep(2)
 
-# SCHEDULER OPTIMIZAT
 sched = BackgroundScheduler()
-sched.add_job(check_prices, 'interval', minutes=5)    # Pretul la 5 min
-sched.add_job(check_rule_one, 'interval', minutes=60) # Indicatorii la 60 min (economie credite)
+sched.add_job(update_all, 'interval', minutes=30) # Rulăm rar pentru a nu consuma creditele
 sched.start()
 
 @app.route('/')
@@ -112,13 +94,12 @@ def index():
 
 @app.route('/add', methods=['POST'])
 def add():
-    s, p = request.form.get('symbol').upper(), float(request.form.get('price', 0))
-    if not Stock.query.filter_by(symbol=s).first():
+    s = request.form.get('symbol', '').upper()
+    p = float(request.form.get('price', 0))
+    if s and not Stock.query.filter_by(symbol=s).first():
         db.session.add(Stock(symbol=s, purchase_price=p))
         db.session.commit()
-        # Forțează actualizarea imediată pentru noua acțiune
-        check_prices()
-        check_rule_one()
+        # Nu apelăm update_all aici ca să nu blocăm interfața, va rula scheduler-ul sau manual
     return jsonify({"status": "ok"})
 
 @app.route('/delete/<int:id>', methods=['DELETE'])
@@ -127,11 +108,10 @@ def delete(id):
     if s: db.session.delete(s); db.session.commit()
     return jsonify({"status": "ok"})
 
-@app.route('/search')
-def search():
-    q = request.args.get('q', '')
-    r = requests.get(f"https://query1.finance.yahoo.com/v1/finance/search?q={q}", headers={'User-Agent': 'Mozilla/5.0'})
-    return jsonify([{'symbol': x['symbol'], 'name': x.get('shortname', '')} for x in r.json().get('quotes', []) if x.get('quoteType') in ['EQUITY', 'ETF']])
+@app.route('/refresh_manual')
+def refresh_manual():
+    update_all()
+    return jsonify({"status": "refreshing"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
