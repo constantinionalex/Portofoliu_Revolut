@@ -21,74 +21,91 @@ class Stock(db.Model):
     purchase_price = db.Column(db.Float, nullable=False)
     current_price = db.Column(db.Float, default=0.0)
     last_signal = db.Column(db.String(10), default="AȘTEAPTĂ")
-    tech_details = db.Column(db.String(200), default="În curs de actualizare...")
+    tech_details = db.Column(db.String(200), default="În curs...")
 
 with app.app_context():
     db.create_all()
 
 def calculate_ro_indicators(prices):
-    """Calcul local MA10 și MACD simplu pentru BVB"""
-    if len(prices) < 26: return None, None, None
+    """Calcul local MA10, MACD și RSI pentru BVB"""
+    if len(prices) < 30: return None, None, None, None
+    
+    # 1. Media Mobilă 10 zile
     ma10 = sum(prices[-10:]) / 10
+    
+    # 2. MACD (Ema12 - Ema26)
     ema12 = sum(prices[-12:]) / 12
     ema26 = sum(prices[-26:]) / 26
     macd = ema12 - ema26
-    signal = macd * 0.95 # Linie de semnal estimată
-    return round(ma10, 2), round(macd, 3), round(signal, 3)
+    signal_line = macd * 0.95
+    
+    # 3. RSI (Relative Strength Index) pe 14 zile
+    deltas = []
+    for i in range(len(prices)-15, len(prices)-1):
+        deltas.append(prices[i+1] - prices[i])
+    
+    gains = sum([d for d in deltas if d > 0]) / 14
+    losses = sum([-d for d in deltas if d < 0]) / 14
+    
+    if losses == 0: 
+        rsi = 100
+    else:
+        rs = gains / losses
+        rsi = 100 - (100 / (1 + rs))
+        
+    return round(ma10, 2), round(macd, 3), round(signal_line, 3), round(rsi, 1)
 
 def update_worker():
-    """Procesul de fundal care nu blochează interfața"""
     with app.app_context():
         stocks = Stock.query.all()
         for s in stocks:
             sym = s.symbol.upper()
             
-            # --- CAZUL 1: ROMÂNIA (Calcul Simplificat) ---
+            # --- CAZUL 1: ROMÂNIA (Calcul Local: MA + MACD + RSI) ---
             if ".RO" in sym or ".BVB" in sym:
                 try:
-                    # Folosim Chart API pentru preț curent + istoric 60 zile
                     clean_sym = sym.replace(".BVB", ".RO")
                     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{clean_sym}?range=60d&interval=1d"
                     r = requests.get(url, headers=HEADERS, timeout=10)
                     data = r.json()
-                    
                     result = data['chart']['result'][0]
                     s.current_price = float(result['meta']['regularMarketPrice'])
                     
-                    # Extragere prețuri închidere pentru indicatori
                     hist_prices = [p for p in result['indicators']['quote'][0]['close'] if p is not None]
-                    ma10, macd, sig = calculate_ro_indicators(hist_prices)
+                    ma10, macd, sig, rsi = calculate_ro_indicators(hist_prices)
                     
                     if ma10:
-                        s.tech_details = f"MA10: {ma10} | MACD: {macd}"
-                        s.last_signal = "BUY" if (s.current_price > ma10 and macd > sig) else "SELL"
+                        # Logica de Semnal: Preț > MA10 ȘI MACD > Semnal ȘI RSI > 50 (Confirmare Trend)
+                        c_buy = (s.current_price > ma10) and (macd > sig) and (rsi > 50)
+                        c_sell = (s.current_price < ma10) and (macd < sig) and (rsi < 50)
+                        
+                        s.tech_details = f"MA:{ma10} | MACD:{macd} | RSI:{rsi}"
+                        s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                     else:
                         s.tech_details = "Istoric insuficient pe Yahoo"
-                except Exception as e:
+                except:
                     s.tech_details = "Eroare date RO"
                 db.session.commit()
 
-            # --- CAZUL 2: SUA (Analiză Twelve Data) ---
+            # --- CAZUL 2: SUA (Analiză Twelve Data: MA + MACD + STOCHASTIC) ---
             else:
                 try:
                     base = "https://api.twelvedata.com"
-                    # 1. Preț Curent
                     p_res = requests.get(f"{base}/quote?symbol={sym}&apikey={TWELVE_DATA_KEY}").json()
                     if "close" in p_res: s.current_price = float(p_res['close'])
                     
-                    # 2. Indicatori (Pauză 12s pentru a respecta limita de 8 req/min)
+                    # Pauze pentru limita API Free (8 req/min)
                     time.sleep(12)
                     ma = requests.get(f"{base}/ma?symbol={sym}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
                     time.sleep(12)
                     macd = requests.get(f"{base}/macd?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
                     time.sleep(12)
-                    stoch = requests.get(f"{base}/stoch?symbol={sym}&interval=1day&fast_k_period=14&slow_k_period=5&slow_d_period=5&apikey={TWELVE_DATA_KEY}").json()
+                    stoch = requests.get(f"{base}/stoch?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
                     
                     m_v = float(ma['values'][0]['ma'])
                     md_v, ms_v = float(macd['values'][0]['macd']), float(macd['values'][0]['macd_signal'])
                     sk_v, sd_v = float(stoch['values'][0]['slow_k']), float(stoch['values'][0]['slow_d'])
                     
-                    # Logica Phil Town: Preț > MA10 ȘI MACD > Signal ȘI StochK > StochD
                     c_buy = (s.current_price > m_v) and (md_v > ms_v) and (sk_v > sd_v)
                     c_sell = (s.current_price < m_v) and (md_v < ms_v) and (sk_v < sd_v)
                     
@@ -107,7 +124,6 @@ def index():
 
 @app.route('/refresh_manual')
 def refresh_manual():
-    # Pornim thread-ul și scăpăm de eroarea 502 (Cloudflare timeout)
     threading.Thread(target=update_worker).start()
     return jsonify({"status": "Pornit"})
 
