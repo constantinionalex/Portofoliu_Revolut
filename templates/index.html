@@ -3,44 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rule #1 Invest</title>
+    <title>Rule #1 Portfolio</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #f8f9fa; font-size: 14px; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-        .badge-buy { background: #198754; }
+        body { background: #f4f6f9; font-size: 14px; }
+        .card { border-radius: 15px; border: none; box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
+        .badge-buy { background: #28a745; }
         .badge-sell { background: #dc3545; }
         .badge-hold { background: #6c757d; }
-        #autocomplete-results { position: absolute; z-index: 1000; width: 100%; }
-        .tech-text { font-size: 10px; color: #6c757d; }
     </style>
 </head>
 <body class="p-3">
-
 <div class="container" style="max-width: 800px;">
-    <div class="card p-3">
-        <h4 class="text-center mb-4 fw-bold">📈 Portofoliu Rule #1</h4>
-        
-        <div class="row g-2 mb-3 position-relative">
-            <div class="col-7">
-                <input type="text" id="symbol" class="form-control" placeholder="Caută (ex: MU)" autocomplete="off">
-                <div id="autocomplete-results" class="list-group"></div>
-            </div>
-            <div class="col-3">
-                <input type="number" id="price" class="form-control" placeholder="Preț Buy">
-            </div>
-            <div class="col-2 d-grid">
-                <button onclick="addStock()" class="btn btn-primary">+</button>
-            </div>
+    <div class="card p-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h4 class="fw-bold m-0">📈 Phil Town Strategy</h4>
+            <button onclick="location.href='/refresh_manual'" class="btn btn-sm btn-outline-primary">🔄 Recalculează Tot</button>
+        </div>
+
+        <div class="row g-2 mb-4">
+            <div class="col-8"><input type="text" id="symbol" class="form-control" placeholder="Simbol (ex: MU)"></div>
+            <div class="col-3"><input type="number" id="price" class="form-control" placeholder="Preț"></div>
+            <div class="col-1"><button onclick="addStock()" class="btn btn-dark w-100">+</button></div>
         </div>
 
         <div class="table-responsive">
-            <table class="table table-hover align-middle">
+            <table class="table align-middle">
                 <thead>
-                    <tr class="table-light">
-                        <th>Simbol</th>
+                    <tr class="text-muted" style="font-size: 11px; text-transform: uppercase;">
+                        <th>Acțiune</th>
                         <th>Semnal</th>
-                        <th>Indicatori (MA | MACD | ST)</th>
+                        <th>Indicatori (MA | MACD | STOCH)</th>
                         <th>Profit</th>
                         <th></th>
                     </tr>
@@ -48,50 +41,31 @@
                 <tbody>
                     {% for s in stocks %}
                     <tr>
-                        <td>
-                            <div class="fw-bold">{{ s.symbol }}</div>
-                            <div class="small text-muted">${{ s.current_price }}</div>
+                        <td><b class="d-block">{{ s.symbol }}</b><small>${{ s.current_price }}</small></td>
+                        <td><span class="badge {{ 'badge-buy' if s.last_signal == 'BUY' else 'badge-sell' if s.last_signal == 'SELL' else 'badge-hold' }}">{{ s.last_signal }}</span></td>
+                        <td style="font-size: 10px; color: #7f8c8d;">{{ s.tech_details }}</td>
+                        <td class="fw-bold {{ 'text-success' if s.current_price >= s.purchase_price else 'text-danger' }}">
+                            {{ (((s.current_price - s.purchase_price)/s.purchase_price)*100)|round(1) }}%
                         </td>
-                        <td>
-                            <span class="badge {{ 'badge-buy' if s.last_signal == 'BUY' else 'badge-sell' if s.last_signal == 'SELL' else 'badge-hold' }}">
-                                {{ s.last_signal }}
-                            </span>
-                        </td>
-                        <td class="tech-text">{{ s.tech_details }}</td>
-                        <td class="{{ 'text-success' if s.current_price >= s.purchase_price else 'text-danger' }} fw-bold">
-                            {{ (((s.current_price - s.purchase_price)/s.purchase_price)*100)|round(2) }}%
-                        </td>
-                        <td><button onclick="deleteStock({{ s.id }})" class="btn btn-sm text-danger">×</button></td>
+                        <td class="text-end"><button onclick="del({{s.id}})" class="btn btn-sm text-muted">×</button></td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-        <p class="text-center tech-text mt-3">Sincronizat Stoch: 14, 5, 5 | Actualizare orară indicatori</p>
     </div>
 </div>
 
 <script>
-    const input = document.getElementById('symbol');
-    const results = document.getElementById('autocomplete-results');
-
-    input.addEventListener('input', async () => {
-        if (input.value.length < 2) { results.innerHTML = ''; return; }
-        const r = await fetch(`/search?q=${input.value}`);
-        const data = await r.json();
-        results.innerHTML = data.map(i => `<button class="list-group-item list-group-item-action" onclick="sel('${i.symbol}')"><b>${i.symbol}</b> - ${i.name}</button>`).join('');
-    });
-
-    function sel(s) { input.value = s; results.innerHTML = ''; }
-
     async function addStock() {
-        const f = new FormData(); f.append('symbol', input.value); f.append('price', document.getElementById('price').value);
-        await fetch('/add', {method: 'POST', body: f}); location.reload();
+        const f = new FormData(); 
+        f.append('symbol', document.getElementById('symbol').value);
+        f.append('price', document.getElementById('price').value);
+        await fetch('/add', {method: 'POST', body: f});
+        alert('Acțiunea a fost adăugată. Indicatorii vor apărea în 1-2 minute din cauza limitărilor API.');
+        location.reload();
     }
-
-    async function deleteStock(id) {
-        if(confirm('Ștergi acțiunea?')) { await fetch(`/delete/${id}`, {method: 'DELETE'}); location.reload(); }
-    }
+    async function del(id) { if(confirm('Ștergi?')) { await fetch('/delete/'+id, {method:'DELETE'}); location.reload(); } }
 </script>
 </body>
 </html>
