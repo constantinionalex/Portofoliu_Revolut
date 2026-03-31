@@ -11,8 +11,12 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'in
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# CONFIGURARE
+# --- CONFIGURARE ---
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
+# Introdu aici datele tale de Telegram:
+TELEGRAM_TOKEN = "AICI_INTRODU_TOKEN_BOT"
+TELEGRAM_CHAT_ID = "AICI_INTRODU_CHAT_ID"
+
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
 class Stock(db.Model):
@@ -20,82 +24,65 @@ class Stock(db.Model):
     symbol = db.Column(db.String(20), unique=True, nullable=False)
     purchase_price = db.Column(db.Float, nullable=False)
     current_price = db.Column(db.Float, default=0.0)
-    last_signal = db.Column(db.String(10), default="AȘTEAPTĂ")
-    tech_details = db.Column(db.String(200), default="Se actualizează...")
+    last_signal = db.Column(db.String(10), default="HOLD")
+    tech_details = db.Column(db.String(200), default="Se încarcă...")
 
 with app.app_context():
     if not os.path.exists(os.path.join(basedir, 'instance')):
         os.makedirs(os.path.join(basedir, 'instance'))
     db.create_all()
 
+def send_telegram(message):
+    """Trimite alertă pe Telegram fără a bloca restul codului"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=5)
+    except:
+        pass
+
 def calculate_ro_indicators(prices):
-    """Calcul local MA10, MACD și RSI pentru BVB (doar prețuri Close)"""
     if len(prices) < 30: return None, None, None, None
-    
-    # 1. Media Mobilă 10 zile
     ma10 = sum(prices[-10:]) / 10
-    
-    # 2. MACD (Ema12 - Ema26) simplificat
     ema12 = sum(prices[-12:]) / 12
     ema26 = sum(prices[-26:]) / 26
     macd = ema12 - ema26
     signal_line = macd * 0.95
-    
-    # 3. RSI pe 14 zile
-    deltas = []
-    for i in range(len(prices)-15, len(prices)-1):
-        deltas.append(prices[i+1] - prices[i])
+    deltas = [prices[i+1] - prices[i] for i in range(len(prices)-15, len(prices)-1)]
     gains = sum([d for d in deltas if d > 0]) / 14
     losses = sum([-d for d in deltas if d < 0]) / 14
-    
-    if losses == 0: rsi = 100
-    else:
-        rs = gains / losses
-        rsi = 100 - (100 / (1 + rs))
-        
+    rsi = 100 if losses == 0 else 100 - (100 / (1 + (gains / losses)))
     return round(ma10, 2), round(macd, 3), round(signal_line, 3), round(rsi, 1)
 
 def update_worker():
-    """Worker de fundal: Separă logica SUA de logica RO"""
     with app.app_context():
         stocks = Stock.query.all()
         for s in stocks:
             sym = s.symbol.upper()
+            old_signal = s.last_signal
             
-            # --- LOGICA PENTRU ROMÂNIA (.RO / .BVB) ---
+            # --- ROMÂNIA ---
             if ".RO" in sym or ".BVB" in sym:
                 try:
                     clean_sym = sym.replace(".BVB", ".RO")
                     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{clean_sym}?range=60d&interval=1d"
                     r = requests.get(url, headers=HEADERS, timeout=10)
                     data = r.json()
-                    result = data['chart']['result'][0]
-                    s.current_price = float(result['meta']['regularMarketPrice'])
-                    
-                    hist_prices = [p for p in result['indicators']['quote'][0]['close'] if p is not None]
-                    ma10, macd, sig, rsi = calculate_ro_indicators(hist_prices)
-                    
+                    s.current_price = float(data['chart']['result'][0]['meta']['regularMarketPrice'])
+                    hist = [p for p in data['chart']['result'][0]['indicators']['quote'][0]['close'] if p is not None]
+                    ma10, macd, sig, rsi = calculate_ro_indicators(hist)
                     if ma10:
-                        # Logica RO: BUY doar dacă toți 3 sunt pozitivi. SELL dacă prețul scade sub MA.
                         c_buy = (s.current_price > ma10) and (macd > sig) and (rsi > 50)
                         c_sell = (s.current_price < ma10) or (macd < sig)
-                        s.tech_details = f"MA:{ma10} | MACD:{macd} | RSI:{rsi}"
                         s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
-                    else:
-                        s.tech_details = "Istoric insuficient"
-                except:
-                    s.tech_details = "Eroare date BVB"
-                db.session.commit()
+                        s.tech_details = f"MA:{ma10} | MACD:{macd} | RSI:{rsi}"
+                except: s.tech_details = "Eroare BVB"
 
-            # --- LOGICA PENTRU SUA (Twelve Data - Phil Town Original) ---
+            # --- SUA (Twelve Data) ---
             else:
                 try:
                     base = "https://api.twelvedata.com"
-                    # Preț curent
                     p_res = requests.get(f"{base}/quote?symbol={sym}&apikey={TWELVE_DATA_KEY}").json()
                     if "close" in p_res: s.current_price = float(p_res['close'])
-                    
-                    # Indicatori cu pauză pentru limită API
                     time.sleep(12)
                     ma = requests.get(f"{base}/ma?symbol={sym}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
                     time.sleep(12)
@@ -107,19 +94,18 @@ def update_worker():
                     md_v, ms_v = float(macd['values'][0]['macd']), float(macd['values'][0]['macd_signal'])
                     sk_v, sd_v = float(stoch['values'][0]['slow_k']), float(stoch['values'][0]['slow_d'])
                     
-                    # REVENIRE LA LOGICA STRICTĂ:
-                    # BUY: Toți 3 indicatorii trebuie să fie "sus"
-                    # SELL: Dacă prețul scade sub MA10 SAU MACD scade sub semnal
                     c_buy = (s.current_price > m_v) and (md_v > ms_v) and (sk_v > sd_v)
                     c_sell = (s.current_price < m_v) or (md_v < ms_v)
-                    
-                    s.tech_details = f"MA:{round(m_v,1)} | MACD:{round(md_v,2)}/{round(ms_v,2)} | ST:{round(sk_v,1)}/{round(sd_v,1)}"
                     s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
-                except:
-                    s.tech_details = "Limită API depășită"
-                
-                db.session.commit()
-                time.sleep(2)
+                    s.tech_details = f"MA:{round(m_v,1)} | MACD:{round(md_v,2)}/{round(ms_v,2)} | ST:{round(sk_v,1)}/{round(sd_v,1)}"
+                except: s.tech_details = "Limită API SUA"
+
+            # --- ALERTĂ TELEGRAM ---
+            if s.last_signal != old_signal and s.last_signal in ["BUY", "SELL"]:
+                send_telegram(f"🔔 ALERTĂ {sym}: Semnal nou {s.last_signal} la prețul {s.current_price}")
+            
+            db.session.commit()
+            if not (".RO" in sym or ".BVB" in sym): time.sleep(2)
 
 @app.route('/')
 def index():
@@ -130,17 +116,6 @@ def index():
 def refresh_manual():
     threading.Thread(target=update_worker).start()
     return jsonify({"status": "Actualizarea a început în fundal..."})
-
-@app.route('/search')
-def search():
-    q = request.args.get('q', '').upper()
-    if len(q) < 2: return jsonify([])
-    try:
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={q}"
-        r = requests.get(url, headers=HEADERS, timeout=5)
-        data = r.json()
-        return jsonify([{'symbol': x['symbol'], 'name': x.get('shortname', '')} for x in data.get('quotes', [])])
-    except: return jsonify([])
 
 @app.route('/add', methods=['POST'])
 def add():
