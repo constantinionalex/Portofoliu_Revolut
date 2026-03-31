@@ -7,7 +7,11 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'instance', 'portfolio.db')
+instance_path = os.path.join(basedir, 'instance')
+if not os.path.exists(instance_path):
+    os.makedirs(instance_path)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(instance_path, 'portfolio.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -31,13 +35,13 @@ def get_indicators(symbol):
     try:
         # MA 10
         ma = requests.get(f"{base}/ma?symbol={symbol}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
-        time.sleep(8) # Pauză obligatorie pentru limita de 8 req/min
+        time.sleep(8) 
         
         # MACD
         macd = requests.get(f"{base}/macd?symbol={symbol}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
         time.sleep(8)
         
-        # STOCH 14, 5, 5
+        # STOCH 14, 5, 5 (Sincronizat cu graficul tau)
         stoch = requests.get(f"{base}/stoch?symbol={symbol}&interval=1day&fast_k_period=14&slow_k_period=5&slow_d_period=5&apikey={TWELVE_DATA_KEY}").json()
         
         return {
@@ -47,16 +51,14 @@ def get_indicators(symbol):
             "k": float(stoch['values'][0]['slow_k']),
             "d": float(stoch['values'][0]['slow_d'])
         }
-    except Exception as e:
-        print(f"Eroare API {symbol}: {e}")
-        return None
+    except: return None
 
 def update_all():
     with app.app_context():
         stocks = Stock.query.all()
         if not stocks: return
         
-        # 1. Update Prețuri (1 singur apel batch)
+        # Update preturi (Batch)
         syms = ",".join([s.symbol for s in stocks])
         prices = requests.get(f"https://api.twelvedata.com/quote?symbol={syms}&apikey={TWELVE_DATA_KEY}").json()
         
@@ -65,7 +67,6 @@ def update_all():
             if p_data and "close" in p_data:
                 s.current_price = float(p_data['close'])
             
-            # 2. Update Indicatori (Pe rând, cu pauză)
             t = get_indicators(s.symbol)
             if t:
                 c_sell = (s.current_price < t['ma']) and (t['macd'] < t['sig']) and (t['k'] < t['d'])
@@ -74,17 +75,15 @@ def update_all():
                 s.tech_details = f"MA:{round(t['ma'],2)} | MACD:{round(t['macd'],2)}/{round(t['sig'],2)} | ST:{round(t['k'],1)}/{round(t['d'],1)}"
                 new_status = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                 
-                if new_status != s.last_signal and new_status != "HOLD":
-                    requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text=📢 {s.symbol}: {new_status} (${s.current_price})")
+                if new_status != s.last_signal and new_status in ["BUY", "SELL"]:
+                    if TELEGRAM_TOKEN:
+                        requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_ID}&text=📢 {s.symbol}: {new_status} (${s.current_price})")
                 s.last_signal = new_status
-            else:
-                s.tech_details = "Eroare Limită API (Așteaptă)"
-            
             db.session.commit()
             time.sleep(2)
 
 sched = BackgroundScheduler()
-sched.add_job(update_all, 'interval', minutes=30) # Rulăm rar pentru a nu consuma creditele
+sched.add_job(update_all, 'interval', minutes=60)
 sched.start()
 
 @app.route('/')
@@ -92,14 +91,20 @@ def index():
     stocks = Stock.query.all()
     return render_template('index.html', stocks=stocks)
 
+@app.route('/search')
+def search():
+    q = request.args.get('q', '')
+    if len(q) < 2: return jsonify([])
+    r = requests.get(f"https://query1.finance.yahoo.com/v1/finance/search?q={q}", headers={'User-Agent': 'Mozilla/5.0'})
+    return jsonify([{'symbol': x['symbol'], 'name': x.get('shortname', '')} for x in r.json().get('quotes', []) if x.get('quoteType') in ['EQUITY', 'ETF']])
+
 @app.route('/add', methods=['POST'])
 def add():
-    s = request.form.get('symbol', '').upper()
+    s = request.form.get('symbol', '').upper().strip()
     p = float(request.form.get('price', 0))
     if s and not Stock.query.filter_by(symbol=s).first():
         db.session.add(Stock(symbol=s, purchase_price=p))
         db.session.commit()
-        # Nu apelăm update_all aici ca să nu blocăm interfața, va rula scheduler-ul sau manual
     return jsonify({"status": "ok"})
 
 @app.route('/delete/<int:id>', methods=['DELETE'])
@@ -111,7 +116,7 @@ def delete(id):
 @app.route('/refresh_manual')
 def refresh_manual():
     update_all()
-    return jsonify({"status": "refreshing"})
+    return jsonify({"status": "done"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
