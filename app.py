@@ -13,10 +13,8 @@ db = SQLAlchemy(app)
 
 # --- CONFIGURARE ---
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
-# Introdu aici datele tale de Telegram:
 TELEGRAM_TOKEN = "AICI_INTRODU_TOKEN_BOT"
 TELEGRAM_CHAT_ID = "AICI_INTRODU_CHAT_ID"
-
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
 class Stock(db.Model):
@@ -33,7 +31,6 @@ with app.app_context():
     db.create_all()
 
 def send_telegram(message):
-    """Trimite alertă pe Telegram fără a bloca restul codului"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=5)
@@ -60,7 +57,6 @@ def update_worker():
             sym = s.symbol.upper()
             old_signal = s.last_signal
             
-            # --- ROMÂNIA ---
             if ".RO" in sym or ".BVB" in sym:
                 try:
                     clean_sym = sym.replace(".BVB", ".RO")
@@ -76,8 +72,6 @@ def update_worker():
                         s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                         s.tech_details = f"MA:{ma10} | MACD:{macd} | RSI:{rsi}"
                 except: s.tech_details = "Eroare BVB"
-
-            # --- SUA (Twelve Data) ---
             else:
                 try:
                     base = "https://api.twelvedata.com"
@@ -89,21 +83,17 @@ def update_worker():
                     macd = requests.get(f"{base}/macd?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
                     time.sleep(12)
                     stoch = requests.get(f"{base}/stoch?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
-                    
                     m_v = float(ma['values'][0]['ma'])
                     md_v, ms_v = float(macd['values'][0]['macd']), float(macd['values'][0]['macd_signal'])
                     sk_v, sd_v = float(stoch['values'][0]['slow_k']), float(stoch['values'][0]['slow_d'])
-                    
                     c_buy = (s.current_price > m_v) and (md_v > ms_v) and (sk_v > sd_v)
                     c_sell = (s.current_price < m_v) or (md_v < ms_v)
                     s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                     s.tech_details = f"MA:{round(m_v,1)} | MACD:{round(md_v,2)}/{round(ms_v,2)} | ST:{round(sk_v,1)}/{round(sd_v,1)}"
                 except: s.tech_details = "Limită API SUA"
 
-            # --- ALERTĂ TELEGRAM ---
             if s.last_signal != old_signal and s.last_signal in ["BUY", "SELL"]:
                 send_telegram(f"🔔 ALERTĂ {sym}: Semnal nou {s.last_signal} la prețul {s.current_price}")
-            
             db.session.commit()
             if not (".RO" in sym or ".BVB" in sym): time.sleep(2)
 
@@ -115,7 +105,7 @@ def index():
 @app.route('/refresh_manual')
 def refresh_manual():
     threading.Thread(target=update_worker).start()
-    return jsonify({"status": "Actualizarea a început în fundal..."})
+    return jsonify({"status": "Pornit"})
 
 @app.route('/add', methods=['POST'])
 def add():
