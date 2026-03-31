@@ -3,45 +3,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phil Town Strategy - Portofoliu</title>
+    <title>Phil Town Strategy</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body class="bg-gray-100 min-h-screen p-4 md:p-8">
     <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl p-6">
-        
-        <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-            <h1 class="text-3xl font-extrabold text-gray-800 flex items-center">
-                <span class="mr-3">📈</span> Phil Town Strategy
-            </h1>
-            <button onclick="refreshAll()" id="refreshBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-bold transition flex items-center">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-2xl font-extrabold text-gray-800">📊 Portofoliu Phil Town</h1>
+            <button onclick="refreshAll()" id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-bold transition">
                 <i class="fas fa-sync-alt mr-2"></i> Recalculează Tot
             </button>
         </div>
 
-        <form id="addForm" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10 bg-gray-50 p-4 rounded-xl border border-gray-200">
-            <input type="text" name="symbol" placeholder="Simbol (ex: MU sau SNN.RO)" required class="p-3 border rounded-lg focus:ring-2 focus:ring-blue-400 outline-none uppercase">
-            <input type="number" step="0.0001" name="price" placeholder="Preț Buy" required class="p-3 border rounded-lg focus:ring-2 focus:ring-blue-400 outline-none">
-            <button type="submit" class="bg-gray-800 hover:bg-black text-white p-3 rounded-lg font-bold transition">
-                <i class="fas fa-plus"></i>
-            </button>
+        <form id="addForm" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 bg-gray-50 p-4 rounded-xl">
+            <input type="text" name="symbol" placeholder="Simbol (ex: NVDA / SNN.RO)" required class="p-2 border rounded uppercase">
+            <input type="number" step="0.0001" name="price" placeholder="Preț Cumpărare" required class="p-2 border rounded">
+            <button type="submit" class="bg-gray-800 text-white rounded font-bold hover:bg-black transition">Adaugă</button>
         </form>
 
         <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse">
+            <table class="w-full text-left">
                 <thead>
-                    <tr class="text-gray-500 border-b text-sm uppercase">
-                        <th class="px-6 py-4">Acțiune</th>
-                        <th class="px-6 py-4">Semnal</th>
-                        <th class="px-6 py-4">Indicatori (MA | MACD | STOCH/RSI)</th>
-                        <th class="px-6 py-4">Profit</th>
-                        <th class="px-6 py-4"></th>
+                    <tr class="text-gray-500 border-b text-xs uppercase tracking-widest">
+                        <th class="p-4">Acțiune</th>
+                        <th class="p-4">Semnal</th>
+                        <th class="p-4">Indicatori (MA | MACD | ST/RSI)</th>
+                        <th class="p-4">Profit</th>
+                        <th class="p-4"></th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100">
                     {% for stock in stocks %}
                     <tr class="hover:bg-gray-50 transition">
-                        <td class="px-6 py-4">
+                        <td class="p-4">
                             <div class="font-bold text-gray-900">{{ stock.symbol }}</div>
                             <div class="text-sm text-gray-500">
                                 {% if '.RO' in stock.symbol or '.BVB' in stock.symbol %}
@@ -51,26 +46,20 @@
                                 {% endif %}
                             </div>
                         </td>
-                        <td class="px-6 py-4">
-                            {% if stock.last_signal == 'BUY' %}
-                                <span class="bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">BUY</span>
-                            {% elif stock.last_signal == 'SELL' %}
-                                <span class="bg-red-500 text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">SELL</span>
-                            {% else %}
-                                <span class="bg-gray-400 text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">HOLD</span>
-                            {% endif %}
+                        <td class="p-4">
+                            <span class="px-3 py-1 rounded-full text-xs font-bold text-white {{ 'bg-green-500' if stock.last_signal == 'BUY' else 'bg-red-500' if stock.last_signal == 'SELL' else 'bg-gray-400' }}">
+                                {{ stock.last_signal }}
+                            </span>
                         </td>
-                        <td class="px-6 py-4 text-xs font-mono text-gray-600">
-                            {{ stock.tech_details }}
-                        </td>
-                        <td class="px-6 py-4 font-bold">
+                        <td class="p-4 text-xs font-mono text-gray-600">{{ stock.tech_details }}</td>
+                        <td class="p-4 font-bold">
                             {% set profit = ((stock.current_price - stock.purchase_price) / stock.purchase_price * 100) if stock.purchase_price > 0 else 0 %}
                             <span class="{{ 'text-green-600' if profit >= 0 else 'text-red-600' }}">
                                 {{ "%.1f"|format(profit) }}%
                             </span>
                         </td>
-                        <td class="px-6 py-4 text-right">
-                            <button onclick="deleteStock({{ stock.id }})" class="text-gray-400 hover:text-red-500 transition">
+                        <td class="p-4 text-right">
+                            <button onclick="deleteStock({{ stock.id }})" class="text-gray-300 hover:text-red-500 transition">
                                 <i class="fas fa-times"></i>
                             </button>
                         </td>
@@ -82,33 +71,20 @@
     </div>
 
     <script>
-        // Adăugare acțiune
         document.getElementById('addForm').onsubmit = async (e) => {
             e.preventDefault();
-            const formData = new FormData(e.target);
-            await fetch('/add', { method: 'POST', body: formData });
+            await fetch('/add', { method: 'POST', body: new FormData(e.target) });
             location.reload();
         };
-
-        // Ștergere acțiune
         async function deleteStock(id) {
-            if(confirm('Ștergi această acțiune?')) {
-                await fetch(`/delete/${id}`, { method: 'DELETE' });
-                location.reload();
-            }
+            if(confirm('Ștergi acțiunea?')) { await fetch(`/delete/${id}`, { method: 'DELETE' }); location.reload(); }
         }
-
-        // Recalculare asincronă
         async function refreshAll() {
             const btn = document.getElementById('refreshBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Procesez...';
-            
+            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Procesez...';
             await fetch('/refresh_manual');
-            alert("Am pornit actualizarea în fundal. Dă un refresh paginii peste 1-2 minute.");
-            
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Recalculează Tot';
+            alert("Actualizarea a pornit în fundal. Verifică Telegram peste câteva minute.");
+            btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Recalculează Tot';
         }
     </script>
 </body>
