@@ -11,10 +11,10 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'in
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# --- CONFIGURARE ---
+# --- CONFIGURARE ACTUALIZATĂ ---
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
-TELEGRAM_TOKEN = "TOKEN_UL_TAU_AICI"
-TELEGRAM_CHAT_ID = "ID_UL_TAU_AICI"
+TELEGRAM_TOKEN = "8722371365:AAGiQ8g9M2LPNQIsYaM6V0KApwkKaJTi5vg"
+TELEGRAM_CHAT_ID = "8708984447"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
 class Stock(db.Model):
@@ -57,7 +57,7 @@ def update_worker():
             sym = s.symbol.upper()
             old_signal = s.last_signal
             
-            # --- ROMÂNIA (Fără limite stricte) ---
+            # --- LOGICA ROMÂNIA ---
             if ".RO" in sym or ".BVB" in sym:
                 try:
                     clean_sym = sym.replace(".BVB", ".RO")
@@ -74,24 +74,18 @@ def update_worker():
                         s.tech_details = f"MA:{ma10} | MACD:{macd} | RSI:{rsi}"
                 except: s.tech_details = "Eroare BVB"
 
-            # --- SUA (Optimizat pentru Twelve Data Free) ---
+            # --- LOGICA SUA (Optimizată Twelve Data Free) ---
             else:
                 try:
                     base = "https://api.twelvedata.com"
-                    # 1. Preț (1 credit)
                     p_res = requests.get(f"{base}/quote?symbol={sym}&apikey={TWELVE_DATA_KEY}").json()
                     if "close" in p_res: s.current_price = float(p_res['close'])
                     
-                    time.sleep(15) # Pauză obligatorie pentru limita de 8/min
-                    # 2. MA (1 credit)
+                    time.sleep(15) 
                     ma = requests.get(f"{base}/ma?symbol={sym}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
-                    
                     time.sleep(15)
-                    # 3. MACD (1 credit)
                     macd = requests.get(f"{base}/macd?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
-                    
                     time.sleep(15)
-                    # 4. Stochastic (1 credit)
                     stoch = requests.get(f"{base}/stoch?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
                     
                     if 'values' in ma and 'values' in macd and 'values' in stoch:
@@ -104,14 +98,14 @@ def update_worker():
                         s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                         s.tech_details = f"MA:{round(m_v,1)} | MACD:{round(md_v,2)}/{round(ms_v,2)} | ST:{round(sk_v,1)}/{round(sd_v,1)}"
                     else:
-                        s.tech_details = "Limită API (Așteaptă)"
+                        s.tech_details = "Limită API depășită"
                 except: s.tech_details = "Eroare API SUA"
 
             if s.last_signal != old_signal and s.last_signal in ["BUY", "SELL"]:
-                send_telegram(f"🔔 ALERTĂ {sym}: Semnal {s.last_signal} la prețul {s.current_price}")
+                send_telegram(f"🔔 ALERTĂ {sym}: Semnal {s.last_signal} la {s.current_price}")
             
             db.session.commit()
-            time.sleep(10) # Pauză între acțiuni diferite
+            time.sleep(5)
 
 @app.route('/')
 def index():
