@@ -12,7 +12,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'in
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# --- CONFIGURARE ---
+# --- CONFIGURARE DATE PERSONALE ---
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
 TELEGRAM_TOKEN = "8722371365:AAGiQ8g9M2LPNQIsYaM6V0KApwkKaJTi5vg"
 TELEGRAM_CHAT_ID = "8708984447"
@@ -52,13 +52,14 @@ def calculate_ro_indicators(prices):
     return round(ma10, 2), round(macd, 3), round(signal_line, 3), round(rsi, 1)
 
 def update_worker():
-    """Funcția de bază care procesează toate acțiunile"""
     with app.app_context():
         stocks = Stock.query.all()
         for s in stocks:
             sym = s.symbol.upper()
             old_signal = s.last_signal
+            noul_semnal = "HOLD"
             
+            # --- LOGICA BVB (.RO) ---
             if ".RO" in sym or ".BVB" in sym:
                 try:
                     clean_sym = sym.replace(".BVB", ".RO")
@@ -68,42 +69,58 @@ def update_worker():
                     s.current_price = float(data['chart']['result'][0]['meta']['regularMarketPrice'])
                     hist = [p for p in data['chart']['result'][0]['indicators']['quote'][0]['close'] if p is not None]
                     ma10, macd, sig, rsi = calculate_ro_indicators(hist)
+                    
                     if ma10:
-                        c_buy = (s.current_price > ma10) and (macd > sig) and (rsi > 50)
-                        c_sell = (s.current_price < ma10) or (macd < sig)
-                        s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
+                        v_ma = s.current_price > ma10
+                        v_macd = macd > sig
+                        v_rsi = rsi > 50
+                        
+                        if v_ma and v_macd and v_rsi: noul_semnal = "BUY"
+                        elif not v_ma and not v_macd and not v_rsi: noul_semnal = "SELL"
+                        else: noul_semnal = "HOLD"
+                        
                         s.tech_details = f"MA:{ma10} | MACD:{macd} | RSI:{rsi}"
                 except: s.tech_details = "Eroare BVB"
+
+            # --- LOGICA SUA (Twelve Data) ---
             else:
                 try:
                     base = "https://api.twelvedata.com"
                     p_res = requests.get(f"{base}/quote?symbol={sym}&apikey={TWELVE_DATA_KEY}").json()
                     if "close" in p_res: s.current_price = float(p_res['close'])
-                    time.sleep(15) 
+                    
+                    time.sleep(12) # Evitare limită API
                     ma = requests.get(f"{base}/ma?symbol={sym}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
-                    time.sleep(15)
+                    time.sleep(12)
                     macd = requests.get(f"{base}/macd?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
-                    time.sleep(15)
+                    time.sleep(12)
                     stoch = requests.get(f"{base}/stoch?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
                     
                     if 'values' in ma and 'values' in macd and 'values' in stoch:
                         m_v, md_v, ms_v = float(ma['values'][0]['ma']), float(macd['values'][0]['macd']), float(macd['values'][0]['macd_signal'])
                         sk_v, sd_v = float(stoch['values'][0]['slow_k']), float(stoch['values'][0]['slow_d'])
-                        c_buy = (s.current_price > m_v) and (md_v > ms_v) and (sk_v > sd_v)
-                        c_sell = (s.current_price < m_v) or (md_v < ms_v)
-                        s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
-                        s.tech_details = f"MA:{round(m_v,1)} | MACD:{round(md_v,2)}/{round(ms_v,2)} | ST:{round(sk_v,1)}/{round(sd_v,1)}"
+                        
+                        v_ma = s.current_price > m_v
+                        v_macd = md_v > ms_v
+                        v_stoch = sk_v > sd_v
+                        
+                        if v_ma and v_macd and v_stoch: noul_semnal = "BUY"
+                        elif not v_ma and not v_macd and not v_stoch: noul_semnal = "SELL"
+                        else: noul_semnal = "HOLD"
+                        
+                        s.tech_details = f"MA:{round(m_v,1)} | MACD:{round(md_v,2)} | ST:{round(sk_v,1)}"
                     else: s.tech_details = "Limită API depășită"
                 except: s.tech_details = "Eroare API SUA"
 
+            s.last_signal = noul_semnal
             if s.last_signal != old_signal and s.last_signal in ["BUY", "SELL"]:
                 send_telegram(f"🔔 ALERTĂ {sym}: Semnal {s.last_signal} la {s.current_price}")
+            
             db.session.commit()
             time.sleep(5)
 
-# --- PROGRAMARE AUTOMATĂ (SCHEDULER) ---
+# Scheduler pentru update la 60 min
 scheduler = BackgroundScheduler()
-# Rulează update_worker la fiecare 60 de minute
 scheduler.add_job(func=update_worker, trigger="interval", minutes=60)
 scheduler.start()
 
@@ -146,7 +163,4 @@ def delete(id):
     return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
-    try:
-        app.run(host='0.0.0.0', port=5000, use_reloader=False) # use_reloader=False este important pentru scheduler
-    except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
+    app.run(host='0.0.0.0', port=5000, use_reloader=False)
