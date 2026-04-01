@@ -4,6 +4,7 @@ import requests
 import threading
 from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -51,6 +52,7 @@ def calculate_ro_indicators(prices):
     return round(ma10, 2), round(macd, 3), round(signal_line, 3), round(rsi, 1)
 
 def update_worker():
+    """Funcția de bază care procesează toate acțiunile"""
     with app.app_context():
         stocks = Stock.query.all()
         for s in stocks:
@@ -99,6 +101,12 @@ def update_worker():
             db.session.commit()
             time.sleep(5)
 
+# --- PROGRAMARE AUTOMATĂ (SCHEDULER) ---
+scheduler = BackgroundScheduler()
+# Rulează update_worker la fiecare 60 de minute
+scheduler.add_job(func=update_worker, trigger="interval", minutes=60)
+scheduler.start()
+
 @app.route('/')
 def index():
     stocks = Stock.query.all()
@@ -138,4 +146,7 @@ def delete(id):
     return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    try:
+        app.run(host='0.0.0.0', port=5000, use_reloader=False) # use_reloader=False este important pentru scheduler
+    except (KeyboardInterrupt, SystemExit):
+        scheduler.shutdown()
