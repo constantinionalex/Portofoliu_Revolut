@@ -11,7 +11,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'in
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# --- CONFIGURARE ACTUALIZATĂ ---
+# --- CONFIGURARE ---
 TWELVE_DATA_KEY = "0eef54e01c5b4f6aa18c054d569084de"
 TELEGRAM_TOKEN = "8722371365:AAGiQ8g9M2LPNQIsYaM6V0KApwkKaJTi5vg"
 TELEGRAM_CHAT_ID = "8708984447"
@@ -57,7 +57,6 @@ def update_worker():
             sym = s.symbol.upper()
             old_signal = s.last_signal
             
-            # --- LOGICA ROMÂNIA ---
             if ".RO" in sym or ".BVB" in sym:
                 try:
                     clean_sym = sym.replace(".BVB", ".RO")
@@ -73,14 +72,11 @@ def update_worker():
                         s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                         s.tech_details = f"MA:{ma10} | MACD:{macd} | RSI:{rsi}"
                 except: s.tech_details = "Eroare BVB"
-
-            # --- LOGICA SUA (Optimizată Twelve Data Free) ---
             else:
                 try:
                     base = "https://api.twelvedata.com"
                     p_res = requests.get(f"{base}/quote?symbol={sym}&apikey={TWELVE_DATA_KEY}").json()
                     if "close" in p_res: s.current_price = float(p_res['close'])
-                    
                     time.sleep(15) 
                     ma = requests.get(f"{base}/ma?symbol={sym}&interval=1day&time_period=10&apikey={TWELVE_DATA_KEY}").json()
                     time.sleep(15)
@@ -89,21 +85,17 @@ def update_worker():
                     stoch = requests.get(f"{base}/stoch?symbol={sym}&interval=1day&apikey={TWELVE_DATA_KEY}").json()
                     
                     if 'values' in ma and 'values' in macd and 'values' in stoch:
-                        m_v = float(ma['values'][0]['ma'])
-                        md_v, ms_v = float(macd['values'][0]['macd']), float(macd['values'][0]['macd_signal'])
+                        m_v, md_v, ms_v = float(ma['values'][0]['ma']), float(macd['values'][0]['macd']), float(macd['values'][0]['macd_signal'])
                         sk_v, sd_v = float(stoch['values'][0]['slow_k']), float(stoch['values'][0]['slow_d'])
-                        
                         c_buy = (s.current_price > m_v) and (md_v > ms_v) and (sk_v > sd_v)
                         c_sell = (s.current_price < m_v) or (md_v < ms_v)
                         s.last_signal = "BUY" if c_buy else "SELL" if c_sell else "HOLD"
                         s.tech_details = f"MA:{round(m_v,1)} | MACD:{round(md_v,2)}/{round(ms_v,2)} | ST:{round(sk_v,1)}/{round(sd_v,1)}"
-                    else:
-                        s.tech_details = "Limită API depășită"
+                    else: s.tech_details = "Limită API depășită"
                 except: s.tech_details = "Eroare API SUA"
 
             if s.last_signal != old_signal and s.last_signal in ["BUY", "SELL"]:
                 send_telegram(f"🔔 ALERTĂ {sym}: Semnal {s.last_signal} la {s.current_price}")
-            
             db.session.commit()
             time.sleep(5)
 
@@ -116,6 +108,17 @@ def index():
 def refresh_manual():
     threading.Thread(target=update_worker).start()
     return jsonify({"status": "Pornit"})
+
+@app.route('/search')
+def search():
+    q = request.args.get('q', '').upper()
+    if len(q) < 2: return jsonify([])
+    try:
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={q}"
+        r = requests.get(url, headers=HEADERS, timeout=5)
+        data = r.json()
+        return jsonify([{'symbol': x['symbol'], 'name': x.get('shortname', '')} for x in data.get('quotes', [])])
+    except: return jsonify([])
 
 @app.route('/add', methods=['POST'])
 def add():
