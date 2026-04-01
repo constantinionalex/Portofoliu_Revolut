@@ -16,14 +16,17 @@
     <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl p-6">
         <div class="flex justify-between items-center mb-8">
             <h1 class="text-2xl font-extrabold text-gray-800">📊 Portofoliu Phil Town</h1>
-            <button onclick="refreshAll()" id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-bold transition">
-                <i class="fas fa-sync-alt mr-2"></i> Recalculează Tot
-            </button>
+            <div class="flex gap-2">
+                <span class="text-xs text-gray-400 self-center">Auto-update: 60 min</span>
+                <button onclick="refreshAll()" id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-bold transition">
+                    <i class="fas fa-sync-alt mr-2"></i> Recalculează Tot
+                </button>
+            </div>
         </div>
 
         <div class="relative grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 bg-gray-50 p-4 rounded-xl border border-gray-200">
             <div class="relative">
-                <input type="text" id="symbolInput" placeholder="Caută Simbol (ex: NVDA sau SNN.RO)" autocomplete="off" class="w-full p-2 border rounded uppercase outline-none focus:ring-2 focus:ring-blue-400">
+                <input type="text" id="symbolInput" placeholder="Caută Simbol (ex: NVDA)" autocomplete="off" class="w-full p-2 border rounded uppercase outline-none focus:ring-2 focus:ring-blue-400">
                 <div id="results" class="search-results hidden"></div>
             </div>
             <input type="number" id="priceInput" step="0.0001" placeholder="Preț Cumpărare" class="p-2 border rounded outline-none focus:ring-2 focus:ring-blue-400">
@@ -82,40 +85,26 @@
         const symbolInput = document.getElementById('symbolInput');
         const resultsDiv = document.getElementById('results');
 
-        // Funcția de Căutare (Autocomplete)
         symbolInput.addEventListener('input', async (e) => {
             const q = e.target.value;
             if (q.length < 2) { resultsDiv.classList.add('hidden'); return; }
-            
             const res = await fetch(`/search?q=${q}`);
             const data = await res.json();
-            
             if (data.length > 0) {
-                resultsDiv.innerHTML = data.map(item => `
-                    <div class="search-item" onclick="selectSymbol('${item.symbol}')">
-                        <span class="font-bold">${item.symbol}</span> - <span class="text-sm text-gray-500">${item.name}</span>
-                    </div>
-                `).join('');
+                resultsDiv.innerHTML = data.map(item => `<div class="search-item" onclick="selectSymbol('${item.symbol}')"><span class="font-bold">${item.symbol}</span> - ${item.name}</div>`).join('');
                 resultsDiv.classList.remove('hidden');
-            } else {
-                resultsDiv.classList.add('hidden');
-            }
+            } else { resultsDiv.classList.add('hidden'); }
         });
 
-        function selectSymbol(sym) {
-            symbolInput.value = sym;
-            resultsDiv.classList.add('hidden');
-        }
+        function selectSymbol(sym) { symbolInput.value = sym; resultsDiv.classList.add('hidden'); }
 
         async function addStock() {
             const symbol = symbolInput.value;
             const price = document.getElementById('priceInput').value;
             if(!symbol || !price) return alert("Completează ambele câmpuri!");
-            
             const formData = new FormData();
             formData.append('symbol', symbol);
             formData.append('price', price);
-            
             await fetch('/add', { method: 'POST', body: formData });
             location.reload();
         }
@@ -128,11 +117,10 @@
             const btn = document.getElementById('refreshBtn');
             btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Procesez...';
             await fetch('/refresh_manual');
-            alert("Actualizarea a pornit în fundal. Verifică Telegram peste câteva minute.");
+            alert("Recalcularea a pornit. Verifică Telegram în curând.");
             btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Recalculează Tot';
         }
 
-        // Închide lista de rezultate dacă dai click în altă parte
         document.addEventListener('click', (e) => {
             if (!e.target.closest('#symbolInput')) resultsDiv.classList.add('hidden');
         });
