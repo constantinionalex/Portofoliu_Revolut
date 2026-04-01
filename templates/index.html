@@ -7,71 +7,83 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
-        .search-results { position: absolute; z-index: 50; width: 100%; background: white; border: 1px solid #ddd; border-radius: 0 0 8px 8px; max-height: 200px; overflow-y: auto; }
+        .search-results { position: absolute; z-index: 50; width: 100%; background: white; border: 1px solid #ddd; border-radius: 0 0 8px 8px; max-height: 200px; overflow-y: auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
         .search-item { padding: 10px; cursor: pointer; border-bottom: 1px solid #eee; }
         .search-item:hover { background: #f3f4f6; }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+<body class="bg-gray-100 min-h-screen p-4 md:p-8 font-sans text-gray-900">
     <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl p-6">
-        <div class="flex justify-between items-center mb-8">
-            <h1 class="text-2xl font-extrabold text-gray-800">📊 Portofoliu Phil Town</h1>
-            <div class="flex gap-2">
-                <span class="text-xs text-gray-400 self-center">Auto-update: 60 min</span>
-                <button onclick="refreshAll()" id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-bold transition">
+        <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+            <h1 class="text-3xl font-extrabold text-gray-800 tracking-tight">📈 Phil Town Strategy</h1>
+            <div class="flex items-center gap-4">
+                <span class="text-xs font-medium text-gray-400 bg-gray-100 px-3 py-1 rounded-full">Auto-update: 60min</span>
+                <button onclick="refreshAll()" id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-xl font-bold transition shadow-lg">
                     <i class="fas fa-sync-alt mr-2"></i> Recalculează Tot
                 </button>
             </div>
         </div>
 
-        <div class="relative grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 bg-gray-50 p-4 rounded-xl border border-gray-200">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 bg-blue-50 p-5 rounded-2xl border border-blue-100">
             <div class="relative">
-                <input type="text" id="symbolInput" placeholder="Caută Simbol (ex: NVDA)" autocomplete="off" class="w-full p-2 border rounded uppercase outline-none focus:ring-2 focus:ring-blue-400">
+                <label class="block text-xs font-bold text-blue-800 mb-1 uppercase">Simbol Acțiune</label>
+                <input type="text" id="symbolInput" placeholder="Caută (ex: GOOGL, SNN.RO)" autocomplete="off" class="w-full p-3 border rounded-xl uppercase outline-none focus:ring-2 focus:ring-blue-400 shadow-sm">
                 <div id="results" class="search-results hidden"></div>
             </div>
-            <input type="number" id="priceInput" step="0.0001" placeholder="Preț Cumpărare" class="p-2 border rounded outline-none focus:ring-2 focus:ring-blue-400">
-            <button onclick="addStock()" class="bg-gray-800 text-white rounded font-bold hover:bg-black transition">Adaugă</button>
+            <div>
+                <label class="block text-xs font-bold text-blue-800 mb-1 uppercase">Preț Cumpărare</label>
+                <input type="number" id="priceInput" step="0.0001" placeholder="Ex: 145.50" class="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-400 shadow-sm">
+            </div>
+            <div class="flex items-end">
+                <button onclick="addStock()" class="w-full bg-gray-900 text-white p-3 rounded-xl font-bold hover:bg-black transition-all transform active:scale-95 shadow-md">
+                    <i class="fas fa-plus mr-2"></i> Adaugă în Portofoliu
+                </button>
+            </div>
         </div>
 
-        <div class="overflow-x-auto">
-            <table class="w-full text-left">
+        <div class="overflow-x-auto rounded-xl">
+            <table class="w-full text-left border-collapse">
                 <thead>
-                    <tr class="text-gray-500 border-b text-xs uppercase tracking-widest">
+                    <tr class="text-gray-400 border-b border-gray-100 text-xs uppercase tracking-widest">
                         <th class="p-4">Acțiune</th>
                         <th class="p-4">Semnal</th>
-                        <th class="p-4">Indicatori (MA | MACD | ST/RSI)</th>
-                        <th class="p-4">Profit</th>
-                        <th class="p-4"></th>
+                        <th class="p-4">Indicatori (Săgeți Phil Town)</th>
+                        <th class="p-4">Profit / Pierdere</th>
+                        <th class="p-4 text-right">Acțiuni</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-100">
+                <tbody class="divide-y divide-gray-50">
                     {% for stock in stocks %}
-                    <tr class="hover:bg-gray-50 transition">
+                    <tr class="hover:bg-gray-50 transition group">
                         <td class="p-4">
-                            <div class="font-bold text-gray-900">{{ stock.symbol }}</div>
-                            <div class="text-sm text-gray-500">
-                                {% if '.RO' in stock.symbol or '.BVB' in stock.symbol %}
-                                    {{ stock.current_price }} RON
-                                {% else %}
-                                    ${{ stock.current_price }}
-                                {% endif %}
+                            <div class="font-bold text-lg text-gray-800">{{ stock.symbol }}</div>
+                            <div class="text-sm font-medium text-gray-500">
+                                {% if '.RO' in stock.symbol or '.BVB' in stock.symbol %} {{ stock.current_price }} RON {% else %} ${{ stock.current_price }} {% endif %}
                             </div>
                         </td>
                         <td class="p-4">
-                            <span class="px-3 py-1 rounded-full text-xs font-bold text-white {{ 'bg-green-500' if stock.last_signal == 'BUY' else 'bg-red-500' if stock.last_signal == 'SELL' else 'bg-gray-400' }}">
+                            <span class="px-4 py-1.5 rounded-lg text-xs font-black tracking-widest text-white shadow-sm
+                                {% if stock.last_signal == 'BUY' %} bg-green-500 
+                                {% elif stock.last_signal == 'SELL' %} bg-red-500 
+                                {% else %} bg-yellow-500 {% endif %}">
                                 {{ stock.last_signal }}
                             </span>
                         </td>
-                        <td class="p-4 text-xs font-mono text-gray-600">{{ stock.tech_details }}</td>
+                        <td class="p-4">
+                            <div class="text-xs font-mono text-gray-600 bg-gray-100 p-2 rounded-lg inline-block">
+                                {{ stock.tech_details }}
+                            </div>
+                        </td>
                         <td class="p-4 font-bold">
                             {% set profit = ((stock.current_price - stock.purchase_price) / stock.purchase_price * 100) if stock.purchase_price > 0 else 0 %}
-                            <span class="{{ 'text-green-600' if profit >= 0 else 'text-red-600' }}">
+                            <div class="flex items-center {{ 'text-green-600' if profit >= 0 else 'text-red-600' }}">
+                                <i class="fas {{ 'fa-caret-up mr-1' if profit >= 0 else 'fa-caret-down mr-1' }}"></i>
                                 {{ "%.1f"|format(profit) }}%
-                            </span>
+                            </div>
                         </td>
                         <td class="p-4 text-right">
-                            <button onclick="deleteStock({{ stock.id }})" class="text-gray-300 hover:text-red-500 transition">
-                                <i class="fas fa-times"></i>
+                            <button onclick="deleteStock({{ stock.id }})" class="text-gray-300 hover:text-red-500 p-2 transition opacity-0 group-hover:opacity-100">
+                                <i class="fas fa-trash-alt"></i>
                             </button>
                         </td>
                     </tr>
@@ -85,13 +97,19 @@
         const symbolInput = document.getElementById('symbolInput');
         const resultsDiv = document.getElementById('results');
 
+        // Live Search / Autocomplete
         symbolInput.addEventListener('input', async (e) => {
             const q = e.target.value;
             if (q.length < 2) { resultsDiv.classList.add('hidden'); return; }
             const res = await fetch(`/search?q=${q}`);
             const data = await res.json();
             if (data.length > 0) {
-                resultsDiv.innerHTML = data.map(item => `<div class="search-item" onclick="selectSymbol('${item.symbol}')"><span class="font-bold">${item.symbol}</span> - ${item.name}</div>`).join('');
+                resultsDiv.innerHTML = data.map(item => `
+                    <div class="search-item" onclick="selectSymbol('${item.symbol}')">
+                        <span class="font-bold text-blue-600">${item.symbol}</span> 
+                        <span class="text-xs text-gray-400 ml-2">(${item.name})</span>
+                    </div>
+                `).join('');
                 resultsDiv.classList.remove('hidden');
             } else { resultsDiv.classList.add('hidden'); }
         });
@@ -101,7 +119,7 @@
         async function addStock() {
             const symbol = symbolInput.value;
             const price = document.getElementById('priceInput').value;
-            if(!symbol || !price) return alert("Completează ambele câmpuri!");
+            if(!symbol || !price) return alert("Completează simbolul și prețul!");
             const formData = new FormData();
             formData.append('symbol', symbol);
             formData.append('price', price);
@@ -110,20 +128,18 @@
         }
 
         async function deleteStock(id) {
-            if(confirm('Ștergi acțiunea?')) { await fetch(`/delete/${id}`, { method: 'DELETE' }); location.reload(); }
+            if(confirm('Ștergi definitiv această acțiune?')) { await fetch(`/delete/${id}`, { method: 'DELETE' }); location.reload(); }
         }
 
         async function refreshAll() {
             const btn = document.getElementById('refreshBtn');
-            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Procesez...';
+            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> În lucru...';
             await fetch('/refresh_manual');
-            alert("Recalcularea a pornit. Verifică Telegram în curând.");
+            alert("Sincronizarea a pornit. Datele se vor actualiza treptat (aprox. 1 min / acțiune SUA).");
             btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Recalculează Tot';
         }
 
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('#symbolInput')) resultsDiv.classList.add('hidden');
-        });
+        document.addEventListener('click', (e) => { if (!e.target.closest('#symbolInput')) resultsDiv.classList.add('hidden'); });
     </script>
 </body>
 </html>
